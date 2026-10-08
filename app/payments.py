@@ -72,17 +72,89 @@ async def save_actual_income(
     actual_income: float,
 ):
     async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """
+            SELECT
+                event_date,
+                actual_income,
+                status
+            FROM salary_events
+            WHERE id = ?
+            """,
+            (event_id,),
+        )
+
+        event = await cursor.fetchone()
+
+        if not event:
+            return {
+                "success": False,
+                "error": "Событие дохода не найдено.",
+            }
+
+        if event[2] == "income_received":
+            return {
+                "success": False,
+                "error": "Этот доход уже был записан.",
+            }
+
         await db.execute(
             """
             UPDATE salary_events
             SET actual_income = ?,
-                status = 'income_received'
+                status = 'income_received',
+                completed_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
-            (actual_income, event_id),
+            (
+                actual_income,
+                event_id,
+            ),
+        )
+
+        cursor = await db.execute(
+            """
+            SELECT id
+            FROM users
+            ORDER BY id
+            LIMIT 1
+            """
+        )
+
+        user = await cursor.fetchone()
+
+        if not user:
+            return {
+                "success": False,
+                "error": "Пользователь не найден.",
+            }
+
+        await db.execute(
+            """
+            INSERT INTO operations (
+                user_id,
+                operation_type,
+                amount,
+                description,
+                operation_date
+            )
+            VALUES (?, 'income', ?, ?, ?)
+            """,
+            (
+                user[0],
+                actual_income,
+                "Получение дохода",
+                event[0],
+            ),
         )
 
         await db.commit()
+
+    return {
+        "success": True,
+        "event_id": event_id,
+        "actual_income": actual_income,
+    }
 
 
 async def create_mandatory_payment(
