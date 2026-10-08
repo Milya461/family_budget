@@ -7,10 +7,14 @@ from app import db
 from app.db import init_db
 from app.setup import setup
 from app.payment_flow import (
+    find_income_event,
     get_current_balance,
+    record_actual_income,
+    start_early_income_event,
     start_income_event,
 )
 from app.payments import (
+    get_event,
     get_event_payments,
     save_actual_payment,
 )
@@ -206,7 +210,7 @@ async def test_mandatory_payment_reduces_balance():
             (
                 123456789,
                 "Тестовый пользователь",
-            ),
+            )
         )
         await connection.commit()
 
@@ -236,3 +240,118 @@ async def test_mandatory_payment_reduces_balance():
     balance_after = await get_current_balance()
 
     assert balance_after == balance_before - 17642
+
+
+@pytest.mark.asyncio
+async def test_early_income_keeps_planned_day():
+    early_date = date(2026, 10, 8)
+
+    result = await start_early_income_event(
+        actual_date=early_date,
+        planned_day=10,
+    )
+
+    assert result["event_date"] == "2026-10-08"
+    assert result["planned_day"] == 10
+    assert result["planned_income"] == 50000
+
+
+@pytest.mark.asyncio
+async def test_early_income_is_recorded_once():
+    early_date = date(2026, 10, 8)
+
+    result = await start_early_income_event(
+        actual_date=early_date,
+        planned_day=10,
+    )
+
+    event_id = result["id"]
+
+    async with db.aiosqlite.connect(db.DB_PATH) as connection:
+        await connection.execute(
+            """
+            INSERT INTO users (
+                telegram_id,
+                name
+            )
+            VALUES (?, ?)
+            """,
+            (
+                123456789,
+                "Тестовый пользователь",
+            ),
+        )
+        await connection.commit()
+
+    recorded = await record_actual_income(
+        event_id=event_id,
+        actual_income=50000,
+        actual_date=early_date,
+    )
+
+    assert recorded["success"] is True
+    assert recorded["actual_income"] == 50000
+    assert recorded["actual_date"] == "2026-10-08"
+
+    second_record = await record_actual_income(
+        event_id=event_id,
+        actual_income=50000,
+        actual_date=date(2026, 10, 10),
+    )
+
+    assert second_record["success"] is False
+    assert "уже был записан" in second_record["error"]
+
+
+@pytest.mark.asyncio
+async def test_planned_date_finds_early_income():
+    early_date = date(2026, 10, 8)
+
+    result = await start_early_income_event(
+        actual_date=early_date,
+        planned_day=10,
+    )
+
+    event_id = result["id"]
+
+    async with db.aiosqlite.connect(db.DB_PATH) as connection:
+        await connection.execute(
+            """
+            INSERT INTO users (
+                telegram_id,
+                name
+            )
+            VALUES (?, ?)
+            """,
+            (
+                123456789,
+                "Тестовый пользователь",
+            ),
+        )
+        await connection.commit()
+
+    recorded = await record_actual_income(
+        event_id=event_id,
+        actual_income=50000,
+        actual_date=early_date,
+    )
+
+    assert recorded["success"] is True
+
+    found = await find_income_event(
+        planned_day=10,
+        month="2026-10",
+    )
+
+    assert found is not None
+    assert found["id"] == event_id
+    assert found["event_date"] == "2026-10-08"
+    assert found["planned_day"] == 10
+    assert found["actual_income"] == 50000
+    assert found["status"] == "income_received"
+
+    event = await get_event(event_id)
+
+    assert event is not None
+    assert event["planned_day"] == 10
+    assert event["event_date"] == "2026-10-08"
