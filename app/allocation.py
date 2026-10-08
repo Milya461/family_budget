@@ -159,7 +159,9 @@ async def calculate_remaining_monthly_budgets(
     """
 
     if month is None:
-        month = get_moscow_today().strftime("%Y-%m")
+        month = get_moscow_today().strftime(
+            "%Y-%m"
+        )
 
     categories = await get_monthly_category_budgets()
 
@@ -253,7 +255,9 @@ async def get_monthly_budget_summary(
     """
 
     if month is None:
-        month = get_moscow_today().strftime("%Y-%m")
+        month = get_moscow_today().strftime(
+            "%Y-%m"
+        )
 
     categories = await get_monthly_category_budgets()
 
@@ -315,13 +319,31 @@ def distribute_amount(
     savings_remaining: float,
 ):
     """
-    Распределяет остаток после обязательных платежей.
+    Распределяет доступную сумму.
 
-    Сначала заполняются месячные бюджеты
-    категорий, затем остаток отправляется
-    в копилку.
+    Сначала деньги распределяются между всеми
+    категориями пропорционально их оставшимся
+    месячным лимитам.
 
-    Сверх месячных целей деньги не распределяются.
+    После полного заполнения месячного бюджета
+    категорий остаток направляется в копилку.
+
+    Пример:
+
+    Если осталось распределить 17 000 ₽,
+    деньги не уходят целиком в первую категорию.
+
+    Они распределяются между:
+    - Продуктами,
+    - Бензином,
+    - Питомцами,
+    - Домом и бытом,
+    - и остальными категориями
+
+    пропорционально их лимитам.
+
+    Виртуальное распределение по категориям
+    не считается реальным расходом.
     """
 
     if amount <= 0:
@@ -331,50 +353,84 @@ def distribute_amount(
             "unallocated": 0,
         }
 
+    available_categories = [
+        category
+        for category in category_budgets
+        if category["remaining"] > 0
+    ]
+
     category_total = sum(
         category["remaining"]
-        for category in category_budgets
+        for category in available_categories
     )
 
-    total_available = (
-        category_total
-        + savings_remaining
-    )
-
-    amount_to_distribute = min(
+    amount_for_categories = min(
         amount,
-        total_available,
+        category_total,
     )
 
     result_categories = []
 
-    remaining_amount = amount_to_distribute
+    if (
+        amount_for_categories > 0
+        and category_total > 0
+    ):
+        distributed = 0
 
-    for category in category_budgets:
-        if remaining_amount <= 0:
-            break
+        for index, category in enumerate(
+            available_categories
+        ):
+            category_remaining = category[
+                "remaining"
+            ]
 
-        category_remaining = category[
-            "remaining"
-        ]
+            if index == len(
+                available_categories
+            ) - 1:
+                allocation = (
+                    amount_for_categories
+                    - distributed
+                )
+            else:
+                allocation = (
+                    amount_for_categories
+                    * category_remaining
+                    / category_total
+                )
 
-        if category_remaining <= 0:
-            continue
+                allocation = round(
+                    allocation,
+                    2,
+                )
 
-        allocation = min(
-            category_remaining,
-            remaining_amount,
-        )
+            allocation = min(
+                allocation,
+                category_remaining,
+            )
 
-        result_categories.append(
-            {
-                "category_id": category["id"],
-                "category": category["name"],
-                "amount": allocation,
-            }
-        )
+            if allocation <= 0:
+                continue
 
-        remaining_amount -= allocation
+            result_categories.append(
+                {
+                    "category_id": category["id"],
+                    "category": category["name"],
+                    "amount": allocation,
+                }
+            )
+
+            distributed += allocation
+
+    allocated_to_categories = sum(
+        category["amount"]
+        for category in result_categories
+    )
+
+    remaining_amount = max(
+        amount
+        - allocated_to_categories,
+        0,
+    )
 
     savings_allocation = min(
         savings_remaining,
@@ -386,7 +442,10 @@ def distribute_amount(
     return {
         "categories": result_categories,
         "savings": savings_allocation,
-        "unallocated": remaining_amount,
+        "unallocated": max(
+            remaining_amount,
+            0,
+        ),
     }
 
 
@@ -396,7 +455,9 @@ async def save_allocation(
     savings: float,
     source: str,
 ):
-    async with aiosqlite.connect(db.DB_PATH) as connection:
+    async with aiosqlite.connect(
+        db.DB_PATH
+    ) as connection:
 
         for category in categories:
             if category["amount"] <= 0:
@@ -433,7 +494,10 @@ async def save_allocation(
                 )
                 VALUES (?, NULL, NULL, ?, 'savings')
                 """,
-                (month, savings),
+                (
+                    month,
+                    savings,
+                ),
             )
 
             await connection.execute(
@@ -442,7 +506,9 @@ async def save_allocation(
                 SET balance = balance + ?
                 WHERE id = 1
                 """,
-                (savings,),
+                (
+                    savings,
+                ),
             )
 
         await connection.commit()
@@ -453,7 +519,23 @@ async def allocate_income_remainder(
     allocation_date: date | None = None,
 ):
     """
-    Распределяет остаток после обязательных платежей.
+    Распределяет остаток после обязательных
+    платежей.
+
+    Деньги сначала направляются в месячный
+    бюджет жизни 60 000 ₽ пропорционально
+    лимитам категорий.
+
+    После полного заполнения бюджета жизни
+    остаток направляется в копилку до цели
+    23 000 ₽.
+
+    Виртуальное распределение по категориям
+    не уменьшает основной счёт.
+
+    Деньги, направленные в копилку, считаются
+    физически отложенными и уменьшают основной
+    счёт.
     """
 
     if amount <= 0:
@@ -491,7 +573,9 @@ async def allocate_income_remainder(
         categories=distribution[
             "categories"
         ],
-        savings=distribution["savings"],
+        savings=distribution[
+            "savings"
+        ],
         source=(
             f"income_"
             f"{allocation_date.isoformat()}"
@@ -505,7 +589,9 @@ async def allocate_income_remainder(
         "categories": distribution[
             "categories"
         ],
-        "savings": distribution["savings"],
+        "savings": distribution[
+            "savings"
+        ],
         "unallocated": distribution[
             "unallocated"
         ],
