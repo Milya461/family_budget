@@ -1,0 +1,14 @@
+name = "familu-budget"
+main = "worker.py"
+compatibility_date = "2026-10-08"
+
+[vars]
+ENVIRONMENT = "production"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "family-budget-db"
+database_id = "b060a66f-8b86-4dee-8e10-9db1de48d2ae"
+
+[triggers]
+crons = ["0 11 * * *"]
