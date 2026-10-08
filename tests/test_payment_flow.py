@@ -1,7 +1,7 @@
 from datetime import date
-from pathlib import Path
 
 import pytest
+import pytest_asyncio
 
 from app import db
 from app.db import init_db
@@ -16,7 +16,7 @@ from app.payments import (
 )
 
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def clean_database(tmp_path, monkeypatch):
     test_db = tmp_path / "test_family_budget.db"
 
@@ -26,9 +26,21 @@ async def clean_database(tmp_path, monkeypatch):
     import app.payments
     import app.setup
 
-    monkeypatch.setattr(app.payment_flow, "DB_PATH", test_db)
-    monkeypatch.setattr(app.payments, "DB_PATH", test_db)
-    monkeypatch.setattr(app.setup, "DB_PATH", test_db)
+    monkeypatch.setattr(
+        app.payment_flow,
+        "DB_PATH",
+        test_db,
+    )
+    monkeypatch.setattr(
+        app.payments,
+        "DB_PATH",
+        test_db,
+    )
+    monkeypatch.setattr(
+        app.setup,
+        "DB_PATH",
+        test_db,
+    )
 
     await init_db()
     await setup()
@@ -76,6 +88,22 @@ async def test_current_balance():
 
 @pytest.mark.asyncio
 async def test_save_actual_mandatory_payment():
+    async with db.aiosqlite.connect(db.DB_PATH) as connection:
+        await connection.execute(
+            """
+            INSERT INTO users (
+                telegram_id,
+                name
+            )
+            VALUES (?, ?)
+            """,
+            (
+                123456789,
+                "Тестовый пользователь",
+            ),
+        )
+        await connection.commit()
+
     result = await start_income_event(
         date(2026, 10, 10)
     )
@@ -123,6 +151,22 @@ async def test_save_actual_mandatory_payment():
 
 @pytest.mark.asyncio
 async def test_actual_payment_can_be_different_from_plan():
+    async with db.aiosqlite.connect(db.DB_PATH) as connection:
+        await connection.execute(
+            """
+            INSERT INTO users (
+                telegram_id,
+                name
+            )
+            VALUES (?, ?)
+            """,
+            (
+                123456789,
+                "Тестовый пользователь",
+            ),
+        )
+        await connection.commit()
+
     result = await start_income_event(
         date(2026, 10, 10)
     )
