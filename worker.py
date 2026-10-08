@@ -1,21 +1,12 @@
 from workers import WorkerEntrypoint, Response
 
+from app.db import configure_d1
+
 
 class Default(WorkerEntrypoint):
     async def fetch(self, request):
-        try:
-            result = await self.env.DB.prepare(
-                "SELECT value FROM bot_settings WHERE key = 'currency'"
-            ).first("value")
+        configure_d1(self.env.DB)
 
-            currency = result if result else "RUB"
-
-            return Response(
-                f"Family Budget bot is starting! Currency: {currency}"
-            )
-
-        except Exception as e:
-            return Response(
-                f"ERROR: {type(e).__name__}: {e}",
-                status=500,
-            )
+        return Response(
+            "Family Budget bot is starting!"
+        )
