@@ -1,3 +1,5 @@
+from datetime import date
+
 from aiogram import Router
 from aiogram.filters import CommandStart
 from aiogram.types import CallbackQuery, Message
@@ -16,6 +18,7 @@ from app.keyboards import (
 )
 from app.parser import (
     detect_category,
+    detect_debt,
     detect_income,
     extract_amount,
 )
@@ -24,12 +27,176 @@ from app.payment_flow import (
 )
 from app.payments import (
     get_planned_payments,
+    save_actual_payment,
 )
 
 
 router = Router()
 
 pending_expenses = {}
+
+
+PAYMENT_KEYWORDS = {
+    "Кредитная карта": [
+        "кредитка",
+        "кредитная карта",
+    ],
+    "Кредит на машину": [
+        "кредит на машину",
+        "автокредит",
+        "машина кредит",
+    ],
+    "Ипотека": [
+        "ипотека",
+    ],
+    "Коммунальные услуги": [
+        "коммунальные",
+        "коммуналка",
+        "коммунальные услуги",
+        "жкх",
+    ],
+}
+
+
+def detect_payment(text: str):
+    normalized = text.lower()
+
+    for payment_name, keywords in PAYMENT_KEYWORDS.items():
+        for keyword in keywords:
+            if keyword in normalized:
+                return payment_name
+
+    return None
+
+
+async def find_pending_payment(payment_name: str):
+    today = date.today().isoformat()
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """
+            SELECT
+                mp.id,
+                mp.salary_event_id,
+                mp.payment_name,
+                mp.planned_amount,
+                mp.actual_amount,
+                mp.status
+            FROM mandatory_payments mp
+            JOIN salary_events se
+              ON se.id = mp.salary_event_id
+            WHERE mp.payment_name = ?
+              AND se.event_date = ?
+              AND mp.status = 'pending'
+            ORDER BY mp.id DESC
+            LIMIT 1
+            """,
+            (payment_name, today),
+        )
+
+        row = await cursor.fetchone()
+
+    if not row:
+        return None
+
+    return {
+        "id": row[0],
+        "salary_event_id": row[1],
+        "payment_name": row[2],
+        "planned_amount": row[3],
+        "actual_amount": row[4],
+        "status": row[5],
+    }
+
+
+async def create_today_payment_if_needed(payment_name: str):
+    today = date.today()
+
+    planned_payments = await get_planned_payments(today.day)
+
+    planned_amount = None
+
+    for name, amount in planned_payments:
+        if name == payment_name:
+            planned_amount = amount
+            break
+
+    if planned_amount is None:
+        return None
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """
+            SELECT id
+            FROM salary_events
+            WHERE event_date = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (today.isoformat(),),
+        )
+
+        event = await cursor.fetchone()
+
+    if not event:
+        from app.payment_flow import start_income_event
+
+        result = await start_income_event(today)
+
+        event_id = result["event_id"]
+    else:
+        event_id = event[0]
+
+    payment = await find_pending_payment(payment_name)
+
+    if payment:
+        return payment
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """
+            SELECT id
+            FROM debts
+            WHERE name = ?
+            """,
+            (payment_name,),
+        )
+
+        debt = await cursor.fetchone()
+
+        debt_id = debt[0] if debt else None
+
+        cursor = await db.execute(
+            """
+            INSERT INTO mandatory_payments (
+                salary_event_id,
+                payment_name,
+                debt_id,
+                planned_amount,
+                status
+            )
+            VALUES (?, ?, ?, ?, 'pending')
+            """,
+            (
+                event_id,
+                payment_name,
+                debt_id,
+                planned_amount,
+            ),
+        )
+
+        payment_id = cursor.lastrowid
+
+        await db.commit()
+
+    return {
+        "id": payment_id,
+        "salary_event_id": event_id,
+        "payment_name": payment_name,
+        "planned_amount": planned_amount,
+        "actual_amount": None,
+        "status": "pending",
+    }
 
 
 @router.message(CommandStart())
@@ -122,7 +289,7 @@ async def mandatory_payments_button(message: Message):
             "Например:",
             "• ипотека 8937",
             "• кредитка 17642",
-            "• кредит на машину 14983",
+            "• кредит на машине 14983",
             "• коммунальные услуги 9780",
         ]
     )
@@ -185,6 +352,58 @@ async def operation_handler(message: Message):
             "Не смог найти сумму.\n\n"
             "Напиши, например:\n"
             "продукты 599"
+        )
+        return
+
+    payment_name = detect_payment(text)
+
+    if payment_name:
+        payment = await create_today_payment_if_needed(
+            payment_name
+        )
+
+        if not payment:
+            await message.answer(
+                f"Платёж «{payment_name}» "
+                "не запланирован на сегодня."
+            )
+            return
+
+        result = await save_actual_payment(
+            payment_id=payment["id"],
+            actual_amount=amount,
+        )
+
+        if not result:
+            await message.answer(
+                "Не удалось сохранить обязательный платёж."
+            )
+            return
+
+        difference = (
+            amount - payment["planned_amount"]
+        )
+
+        if difference > 0:
+            difference_text = (
+                f"На {difference:,.0f} ₽ больше плана."
+            )
+        elif difference < 0:
+            difference_text = (
+                f"На {abs(difference):,.0f} ₽ меньше плана."
+            )
+        else:
+            difference_text = "Точно по плану."
+
+        await message.answer(
+            (
+                f"🏦 Платёж записан.\n\n"
+                f"Платёж: {payment_name}\n"
+                f"Фактически: {amount:,.0f} ₽\n"
+                f"План: {payment['planned_amount']:,.0f} ₽\n"
+                f"{difference_text}"
+            ).replace(",", " "),
+            reply_markup=main_menu(),
         )
         return
 
