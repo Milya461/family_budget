@@ -175,7 +175,17 @@ async def test_full_monthly_budget_flow():
 
     await create_test_user()
 
-    # 10 октября.
+    # =================================================
+    # 10 октября
+    #
+    # Доход: 50 000 ₽
+    # Кредитная карта: 18 000 ₽
+    # Машина: 15 000 ₽
+    #
+    # Остаток:
+    # 50 000 - 18 000 - 15 000 = 17 000 ₽
+    # =================================================
+
     await record_income_and_payments(
         event_date=date(2026, 10, 10),
         actual_income=50000,
@@ -185,14 +195,87 @@ async def test_full_monthly_budget_flow():
         },
     )
 
-    # 15 октября.
+    report = await get_monthly_report(
+        month="2026-10"
+    )
+
+    budget = await get_monthly_budget_summary(
+        month="2026-10"
+    )
+
+    assert report["month_income"] == 50000
+
+    assert report["credit_expenses"] == 33000
+
+    assert report["mandatory_expenses"] == 33000
+
+    assert report["category_allocations"] == 17000
+
+    assert report["monthly_savings"] == 0
+
+    assert report["main_account"] == 17000
+
+    assert budget["allocated"] == 17000
+
+    assert budget["remaining_to_allocate"] == 43000
+
+    # =================================================
+    # 15 октября
+    #
+    # Доход: 27 500 ₽
+    #
+    # Новое распределение:
+    # 17 000 + 27 500 = 44 500 ₽
+    #
+    # Всё пока идёт в категории.
+    # =================================================
+
     await record_income_and_payments(
         event_date=date(2026, 10, 15),
         actual_income=27500,
         payments={},
     )
 
-    # 25 октября.
+    report = await get_monthly_report(
+        month="2026-10"
+    )
+
+    budget = await get_monthly_budget_summary(
+        month="2026-10"
+    )
+
+    assert report["month_income"] == 77500
+
+    assert report["mandatory_expenses"] == 33000
+
+    assert report["category_allocations"] == 44500
+
+    assert report["monthly_savings"] == 0
+
+    assert report["main_account"] == 44500
+
+    assert budget["allocated"] == 44500
+
+    assert budget["remaining_to_allocate"] == 15500
+
+    # =================================================
+    # 25 октября
+    #
+    # Доход: 45 000 ₽
+    #
+    # Платежи:
+    # машина      15 000 ₽
+    # ипотека      9 000 ₽
+    # коммуналка 10 000 ₽
+    #
+    # Остаток события:
+    # 45 000 - 15 000 - 9 000 - 10 000
+    # = 11 000 ₽
+    #
+    # Всего распределено:
+    # 44 500 + 11 000 = 55 500 ₽
+    # =================================================
+
     await record_income_and_payments(
         event_date=date(2026, 10, 25),
         actual_income=45000,
@@ -203,7 +286,55 @@ async def test_full_monthly_budget_flow():
         },
     )
 
-    # 30 октября.
+    report = await get_monthly_report(
+        month="2026-10"
+    )
+
+    budget = await get_monthly_budget_summary(
+        month="2026-10"
+    )
+
+    assert report["month_income"] == 122500
+
+    assert report["credit_expenses"] == 48000
+
+    assert report["mortgage_expenses"] == 9000
+
+    assert report["utilities_expenses"] == 10000
+
+    assert report["mandatory_expenses"] == 67000
+
+    assert report["category_allocations"] == 55500
+
+    assert report["monthly_savings"] == 0
+
+    assert report["main_account"] == 55500
+
+    assert budget["allocated"] == 55500
+
+    assert budget["remaining_to_allocate"] == 4500
+
+    # =================================================
+    # 30 октября
+    #
+    # Доход: 27 500 ₽
+    #
+    # До полного бюджета жизни не хватает:
+    # 60 000 - 55 500 = 4 500 ₽
+    #
+    # Поэтому:
+    #
+    # 4 500 ₽ → категории
+    # 23 000 ₽ → копилка
+    # 0 ₽ → нераспределённый остаток
+    #
+    # Всего категорий:
+    # 60 000 ₽.
+    #
+    # Всего копилки:
+    # 23 000 ₽.
+    # =================================================
+
     await record_income_and_payments(
         event_date=date(2026, 10, 30),
         actual_income=27500,
@@ -248,6 +379,8 @@ async def test_full_monthly_budget_flow():
 
     assert budget["allocated"] == 60000
 
+    assert budget["remaining_to_allocate"] == 0
+
     # -------------------------------------------------
     # Реальные расходы на жизнь.
     # -------------------------------------------------
@@ -257,8 +390,6 @@ async def test_full_monthly_budget_flow():
     assert budget["spent"] == 0
 
     assert budget["remaining_to_spend"] == 60000
-
-    assert budget["remaining_to_allocate"] == 0
 
     # -------------------------------------------------
     # Накопления.
