@@ -968,11 +968,21 @@ async def process_message(
         )
         return
 
+    # Сначала читаем выбранный сценарий пользователя.
+    # Ручной доход имеет приоритет над ожидающим плановым доходом.
+    state, state_data = await get_state(
+        user_id
+    )
+
     pending_event_id = await get_pending_income(
         user_id
     )
 
-    if pending_event_id is not None and text:
+    if (
+        state != "income_amount"
+        and pending_event_id is not None
+        and text
+    ):
         try:
             amount = float(
                 text
@@ -1027,10 +1037,6 @@ async def process_message(
                 )
 
             return
-
-    state, state_data = await get_state(
-        user_id
-    )
 
     if state == "income_amount":
         try:
@@ -1103,7 +1109,7 @@ async def process_message(
         if amount <= 0:
             await bot.send_message(
                 chat_id,
-                "❌ Введи сумму больше нуля.",
+                "❌ Введи сумму больше нуля."
             )
             return
 
@@ -1187,7 +1193,7 @@ async def process_message(
         if amount <= 0:
             await bot.send_message(
                 chat_id,
-                "❌ Введи сумму больше нуля.",
+                "❌ Введи сумму больше нуля."
             )
             return
 
