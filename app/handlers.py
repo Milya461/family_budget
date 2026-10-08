@@ -1,4 +1,5 @@
-from datetime import date
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import aiosqlite
 
@@ -36,9 +37,16 @@ from app.payments import (
 
 
 router = Router()
-
 pending_expenses = {}
 pending_income_events = {}
+
+MOSCOW_TIMEZONE = ZoneInfo("Europe/Moscow")
+
+
+def get_moscow_today():
+    return datetime.now(
+        MOSCOW_TIMEZONE
+    ).date()
 
 
 PAYMENT_KEYWORDS = {
@@ -110,7 +118,7 @@ async def remove_pending_income_event(
 async def find_pending_payment(
     payment_name: str,
 ):
-    today = date.today().isoformat()
+    today = get_moscow_today().isoformat()
 
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
@@ -155,7 +163,7 @@ async def find_pending_payment(
 async def create_today_payment_if_needed(
     payment_name: str,
 ):
-    today = date.today()
+    today = get_moscow_today()
 
     planned_payments = await get_planned_payments(
         today.day
@@ -247,7 +255,7 @@ async def create_today_payment_if_needed(
 
 
 async def get_or_create_today_income_event():
-    today = date.today()
+    today = get_moscow_today()
 
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
@@ -323,7 +331,7 @@ async def send_income_question(
         await db.commit()
 
     income_plan = await get_income_plan(
-        date.today().day
+        get_moscow_today().day
     )
 
     if not income_plan:
@@ -562,7 +570,7 @@ async def operation_handler(
         result = await record_actual_income(
             event_id=pending_event_id,
             actual_income=amount,
-            actual_date=date.today(),
+            actual_date=get_moscow_today(),
         )
 
         if not result["success"]:
