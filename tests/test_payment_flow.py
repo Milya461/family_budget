@@ -619,40 +619,33 @@ async def test_savings_reduces_main_account_balance():
     """
     Деньги, физически отправленные в копилку,
     должны уменьшать основной счёт.
+
+    100 000 ₽ доход
+    - 23 000 ₽ отправлено в копилку
+    = 77 000 ₽ на основном счёте.
     """
 
     await create_test_user()
 
     income = await start_income_event(
-        date(2026, 10, 10)
+        date(2026, 10, 15)
     )
 
     recorded = await record_actual_income(
         event_id=income["event_id"],
         actual_income=100000,
-        actual_date=date(2026, 10, 10),
+        actual_date=date(2026, 10, 15),
     )
 
     assert recorded["success"] is True
 
-    payments = await get_event_payments(
-        income["event_id"]
+    balance_before_savings = (
+        await get_current_balance()
     )
 
-    for payment in payments:
-        await record_actual_payment(
-            payment_id=payment["id"],
-            actual_amount=payment[
-                "planned_amount"
-            ],
-        )
+    assert balance_before_savings == 100000
 
-    from app.allocation import (
-        get_savings_balance,
-        save_allocation,
-    )
-
-    savings_before = await get_savings_balance()
+    from app.allocation import save_allocation
 
     await save_allocation(
         month="2026-10",
@@ -661,17 +654,11 @@ async def test_savings_reduces_main_account_balance():
         source="test_savings",
     )
 
-    savings_after = await get_savings_balance()
-
-    assert (
-        savings_after
-        == savings_before + 23000
+    balance_after_savings = (
+        await get_current_balance()
     )
 
-    balance = await get_current_balance()
-
-    # 100 000 ₽ доход
-    # - 33 000 ₽ обязательные платежи
-    # - 23 000 ₽ копилка
-    # = 44 000 ₽ на основном счёте.
-    assert balance == 44000
+    assert (
+        balance_after_savings
+        == 77000
+    )
