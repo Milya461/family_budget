@@ -145,10 +145,25 @@ async def get_monthly_allocation_totals(
 async def calculate_remaining_monthly_budgets(
     month: str | None = None,
 ):
+    """
+    Показывает, сколько ещё можно распределить
+    в каждый месячный бюджет.
+
+    Важно:
+
+    allocated = сколько денег уже виртуально
+    зарезервировано за категорией.
+
+    spent = сколько реально потрачено.
+
+    Потраченные деньги НЕ вычитаются из allocated
+    при расчёте следующего распределения.
+
+    Иначе одна и та же сумма была бы посчитана дважды.
+    """
+
     if month is None:
-        month = get_moscow_today().strftime(
-            "%Y-%m"
-        )
+        month = get_moscow_today().strftime("%Y-%m")
 
     categories = await get_monthly_category_budgets()
     allocations = await get_monthly_allocation_totals(
@@ -170,10 +185,15 @@ async def calculate_remaining_monthly_budgets(
             0,
         )
 
-        remaining = max(
+        remaining_to_allocate = max(
             category["monthly_limit"]
-            - spent
             - already_allocated,
+            0,
+        )
+
+        available_to_spend = max(
+            already_allocated
+            - spent,
             0,
         )
 
@@ -184,7 +204,9 @@ async def calculate_remaining_monthly_budgets(
                 "monthly_limit": category["monthly_limit"],
                 "spent": spent,
                 "already_allocated": already_allocated,
-                "remaining": remaining,
+                "remaining": remaining_to_allocate,
+                "remaining_to_allocate": remaining_to_allocate,
+                "available_to_spend": available_to_spend,
             }
         )
 
@@ -209,6 +231,70 @@ async def calculate_remaining_monthly_budgets(
     }
 
 
+async def get_monthly_budget_summary(
+    month: str | None = None,
+):
+    """
+    Общая картина месячного бюджета.
+
+    Распределение по категориям — виртуальное.
+    Реальные траты считаются отдельно.
+    """
+
+    if month is None:
+        month = get_moscow_today().strftime("%Y-%m")
+
+    categories = await get_monthly_category_budgets()
+    allocations = await get_monthly_allocation_totals(
+        month
+    )
+
+    life_budget = sum(
+        category["monthly_limit"]
+        for category in categories
+    )
+
+    allocated = sum(
+        allocations["categories"].values()
+    )
+
+    spent = 0
+
+    for category in categories:
+        spent += await get_monthly_category_spent(
+            category_id=category["id"],
+            month=month,
+        )
+
+    savings_target = await get_savings_target()
+
+    savings_allocated = allocations[
+        "savings"
+    ]
+
+    return {
+        "month": month,
+        "life_budget": life_budget,
+        "allocated": allocated,
+        "spent": spent,
+        "remaining_to_spend": max(
+            life_budget - spent,
+            0,
+        ),
+        "remaining_to_allocate": max(
+            life_budget - allocated,
+            0,
+        ),
+        "savings_target": savings_target,
+        "savings_allocated": savings_allocated,
+        "savings_remaining": max(
+            savings_target
+            - savings_allocated,
+            0,
+        ),
+    }
+
+
 def distribute_amount(
     amount: float,
     category_budgets: list[dict],
@@ -218,13 +304,15 @@ def distribute_amount(
     Распределяет остаток после обязательных платежей.
 
     Порядок:
-    1. Заполняются оставшиеся месячные бюджеты категорий.
-    2. После категорий остаток отправляется в копилку.
+
+    1. Заполняются оставшиеся месячные бюджеты
+       категорий.
+
+    2. Затем остаток отправляется в копилку.
+
     3. Сверх месячных целей деньги не распределяются.
 
-    Важно:
-    функция ничего не записывает в БД.
-    Она только рассчитывает распределение.
+    Функция ничего не записывает в БД.
     """
 
     if amount <= 0:
@@ -250,7 +338,6 @@ def distribute_amount(
     )
 
     result_categories = []
-
     remaining_amount = amount_to_distribute
 
     for category in category_budgets:
@@ -335,10 +422,7 @@ async def save_allocation(
                 )
                 VALUES (?, NULL, NULL, ?, 'savings')
                 """,
-                (
-                    month,
-                    savings,
-                ),
+                (month, savings),
             )
 
             await db.execute(
@@ -347,9 +431,7 @@ async def save_allocation(
                 SET balance = balance + ?
                 WHERE id = 1
                 """,
-                (
-                    savings,
-                ),
+                (savings,),
             )
 
         await db.commit()
@@ -361,15 +443,6 @@ async def allocate_income_remainder(
 ):
     """
     Распределяет остаток после обязательных платежей.
-
-    Например:
-
-    Доход: 50 000 ₽
-    Платежи: 17 642 + 14 983 ₽
-    Остаток: 17 375 ₽
-
-    Остаток распределяется между месячными
-    категориями и копилкой.
     """
 
     if amount <= 0:
