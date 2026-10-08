@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 import calendar
 
 import aiosqlite
@@ -16,6 +16,17 @@ from app.payments import (
 )
 
 
+MOSCOW_TIMEZONE = "Europe/Moscow"
+
+
+def get_moscow_today():
+    from zoneinfo import ZoneInfo
+
+    return datetime.now(
+        ZoneInfo(MOSCOW_TIMEZONE)
+    ).date()
+
+
 async def start_income_event(
     event_date: date,
     planned_day: int | None = None,
@@ -23,7 +34,7 @@ async def start_income_event(
     """
     Создаёт событие планового дохода.
 
-    event_date — дата, когда событие было создано/зафиксировано.
+    event_date — дата, к которой привязано событие.
     planned_day — плановый день получения дохода.
 
     Если planned_day не указан, используется день event_date.
@@ -111,6 +122,7 @@ async def start_income_event(
                 event_id,
             ),
         )
+
         await db.commit()
 
     planned_payments = await get_planned_payments(
@@ -153,9 +165,8 @@ async def find_income_event(
     """
     Ищет событие дохода по плановой дате и месяцу.
 
-    Это позволяет получить, например,
-    доход 10-го числа даже если он фактически
-    пришёл 8-го.
+    Это позволяет получить доход 10-го числа,
+    даже если он фактически пришёл 8-го.
     """
 
     async with aiosqlite.connect(DB_PATH) as db:
@@ -206,6 +217,10 @@ async def start_early_income_event(
     Например:
     план — 10 октября,
     фактически — 8 октября.
+
+    Важный принцип:
+    planned_day хранит плановую дату,
+    event_date хранит фактическую дату получения.
     """
 
     month = actual_date.strftime("%Y-%m")
@@ -236,8 +251,8 @@ async def record_actual_income(
     """
     Записывает фактическую сумму дохода.
 
-    actual_date — фактическая дата получения.
-    Если не указана, используется текущая дата.
+    Если actual_date не указана,
+    используется текущая дата по Москве.
     """
 
     if actual_income < 0:
@@ -253,6 +268,9 @@ async def record_actual_income(
             "success": False,
             "error": "Событие дохода не найдено.",
         }
+
+    if actual_date is None:
+        actual_date = get_moscow_today()
 
     result = await save_actual_income(
         event_id=event_id,
@@ -276,22 +294,12 @@ async def record_actual_income(
     if not pending_payments:
         from app.allocation import allocate_income_remainder
 
-        allocation_date = (
-            actual_date
-            if actual_date is not None
-            else date.fromisoformat(
-                event["event_date"]
-            )
-        )
-
         allocation = await allocate_income_remainder(
             amount=actual_income,
-            allocation_date=allocation_date,
+            allocation_date=actual_date,
         )
-
-        result["allocation"] = allocation
     else:
-        result["allocation"] = None
+        allocation = None
 
     return {
         **result,
@@ -303,6 +311,7 @@ async def record_actual_income(
             actual_income
             - event["planned_income"]
         ),
+        "allocation": allocation,
     }
 
 
@@ -445,7 +454,9 @@ async def get_event_summary(
         "planned_remaining": (
             planned_remaining
         ),
-        "remaining": remaining,
+        "remaining": (
+            remaining
+        ),
         "all_payments_paid": (
             all_payments_paid
         ),
