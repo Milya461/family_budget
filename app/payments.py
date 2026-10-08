@@ -59,7 +59,9 @@ async def create_salary_event(
             """,
             (event_date, planned_income),
         )
+
         event_id = cursor.lastrowid
+
         await db.commit()
 
     return event_id
@@ -154,6 +156,7 @@ async def save_actual_payment(
                 id,
                 salary_event_id,
                 payment_name,
+                debt_id,
                 planned_amount,
                 actual_amount,
                 status
@@ -168,10 +171,28 @@ async def save_actual_payment(
         if not payment:
             return None
 
-        if payment[5] == "paid":
+        if payment[6] == "paid":
             return {
                 "success": False,
                 "error": "Этот платёж уже был записан.",
+            }
+
+        cursor = await db.execute(
+            """
+            SELECT
+                event_date
+            FROM salary_events
+            WHERE id = ?
+            """,
+            (payment[1],),
+        )
+
+        event = await cursor.fetchone()
+
+        if not event:
+            return {
+                "success": False,
+                "error": "Событие дохода для платежа не найдено.",
             }
 
         await db.execute(
@@ -181,12 +202,15 @@ async def save_actual_payment(
                 status = 'paid'
             WHERE id = ?
             """,
-            (actual_amount, payment_id),
+            (
+                actual_amount,
+                payment_id,
+            ),
         )
 
         cursor = await db.execute(
             """
-            SELECT user_id
+            SELECT id
             FROM users
             ORDER BY id
             LIMIT 1
@@ -195,28 +219,32 @@ async def save_actual_payment(
 
         user = await cursor.fetchone()
 
-        if user:
-            await db.execute(
-                """
-                INSERT INTO operations (
-                    user_id,
-                    operation_type,
-                    amount,
-                    debt_id,
-                    description,
-                    operation_date
-                )
-                VALUES (?, 'expense', ?, ?, ?, ?)
-                """,
-                (
-                    user[0],
-                    actual_amount,
-                    payment[0] if False else None,
-                    payment[2],
-                    payment[2],
-                    date.today().isoformat(),
-                ),
+        if not user:
+            return {
+                "success": False,
+                "error": "Пользователь не найден.",
+            }
+
+        await db.execute(
+            """
+            INSERT INTO operations (
+                user_id,
+                operation_type,
+                amount,
+                debt_id,
+                description,
+                operation_date
             )
+            VALUES (?, 'expense', ?, ?, ?, ?)
+            """,
+            (
+                user[0],
+                actual_amount,
+                payment[3],
+                payment[2],
+                event[0],
+            ),
+        )
 
         await db.commit()
 
@@ -224,9 +252,9 @@ async def save_actual_payment(
         "success": True,
         "payment_id": payment[0],
         "payment_name": payment[2],
-        "planned_amount": payment[3],
+        "planned_amount": payment[4],
         "actual_amount": actual_amount,
-        "difference": actual_amount - payment[3],
+        "difference": actual_amount - payment[4],
         "status": "paid",
     }
 
