@@ -36,29 +36,19 @@ async def get_users():
     ]
 
 
-async def get_today_income_event():
-    today = date.today()
-
+async def get_pending_income(
+    telegram_id: int,
+):
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             """
             SELECT
-                id,
-                event_date,
-                planned_day,
-                planned_income,
-                actual_income,
-                status
-            FROM salary_events
-            WHERE substr(event_date, 1, 7) = ?
-              AND planned_day = ?
-            ORDER BY id DESC
-            LIMIT 1
+                telegram_id,
+                salary_event_id
+            FROM pending_income
+            WHERE telegram_id = ?
             """,
-            (
-                today.strftime("%Y-%m"),
-                today.day,
-            ),
+            (telegram_id,),
         )
 
         row = await cursor.fetchone()
@@ -67,13 +57,50 @@ async def get_today_income_event():
         return None
 
     return {
-        "id": row[0],
-        "event_date": row[1],
-        "planned_day": row[2],
-        "planned_income": row[3],
-        "actual_income": row[4],
-        "status": row[5],
+        "telegram_id": row[0],
+        "salary_event_id": row[1],
     }
+
+
+async def save_pending_income(
+    telegram_id: int,
+    salary_event_id: int,
+):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO pending_income (
+                telegram_id,
+                salary_event_id
+            )
+            VALUES (?, ?)
+            ON CONFLICT(telegram_id)
+            DO UPDATE SET
+                salary_event_id = excluded.salary_event_id,
+                created_at = CURRENT_TIMESTAMP
+            """,
+            (
+                telegram_id,
+                salary_event_id,
+            ),
+        )
+
+        await db.commit()
+
+
+async def remove_pending_income(
+    telegram_id: int,
+):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            DELETE FROM pending_income
+            WHERE telegram_id = ?
+            """,
+            (telegram_id,),
+        )
+
+        await db.commit()
 
 
 async def build_income_message(
@@ -164,6 +191,11 @@ async def send_income_prompt(
 
     for telegram_id in users:
         try:
+            await save_pending_income(
+                telegram_id=telegram_id,
+                salary_event_id=message_data["event_id"],
+            )
+
             await bot.send_message(
                 telegram_id,
                 text,
