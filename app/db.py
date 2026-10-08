@@ -1,159 +1,98 @@
-import aiosqlite
-from pathlib import Path
+from contextvars import ContextVar
 
 
-DB_PATH = Path("family_budget.db")
+# D1 database binding for the current Worker invocation.
+_d1 = ContextVar("d1", default=None)
 
 
-async def init_db():
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY,
-                telegram_id INTEGER UNIQUE NOT NULL,
-                name TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
+def configure_d1(database):
+    """
+    Передаёт D1 binding в слой базы данных.
+    Вызывается из worker.py перед обработкой запроса.
+    """
+    _d1.set(database)
 
-            CREATE TABLE IF NOT EXISTS categories (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT UNIQUE NOT NULL,
-                monthly_limit REAL NOT NULL DEFAULT 0,
-                is_active INTEGER NOT NULL DEFAULT 1
-            );
 
-            CREATE TABLE IF NOT EXISTS debts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT UNIQUE NOT NULL,
-                planned_amount REAL NOT NULL DEFAULT 0,
-                is_active INTEGER NOT NULL DEFAULT 1
-            );
+def get_d1():
+    database = _d1.get()
 
-            CREATE TABLE IF NOT EXISTS income_plans (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                day_of_month INTEGER NOT NULL,
-                name TEXT NOT NULL,
-                planned_amount REAL NOT NULL DEFAULT 0,
-                is_active INTEGER NOT NULL DEFAULT 1
-            );
-
-            CREATE TABLE IF NOT EXISTS operations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                operation_type TEXT NOT NULL,
-                amount REAL NOT NULL,
-                category_id INTEGER,
-                debt_id INTEGER,
-                description TEXT,
-                operation_date TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-                FOREIGN KEY (user_id) REFERENCES users(id),
-                FOREIGN KEY (category_id) REFERENCES categories(id),
-                FOREIGN KEY (debt_id) REFERENCES debts(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS savings (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                balance REAL NOT NULL DEFAULT 0,
-                monthly_target REAL NOT NULL DEFAULT 23000
-            );
-
-            CREATE TABLE IF NOT EXISTS monthly_allocations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                month TEXT NOT NULL,
-                category_id INTEGER,
-                debt_id INTEGER,
-                amount REAL NOT NULL,
-                source TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-                FOREIGN KEY (category_id) REFERENCES categories(id),
-                FOREIGN KEY (debt_id) REFERENCES debts(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS salary_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                event_date TEXT NOT NULL,
-                planned_day INTEGER,
-                planned_income REAL NOT NULL DEFAULT 0,
-                actual_income REAL,
-                status TEXT NOT NULL DEFAULT 'pending',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                completed_at TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS mandatory_payments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                salary_event_id INTEGER NOT NULL,
-                payment_name TEXT,
-                debt_id INTEGER,
-                planned_amount REAL NOT NULL DEFAULT 0,
-                actual_amount REAL,
-                status TEXT NOT NULL DEFAULT 'pending',
-
-                FOREIGN KEY (salary_event_id) REFERENCES salary_events(id),
-                FOREIGN KEY (debt_id) REFERENCES debts(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS pending_income (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                telegram_id INTEGER UNIQUE NOT NULL,
-                salary_event_id INTEGER NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-                FOREIGN KEY (telegram_id) REFERENCES users(telegram_id),
-                FOREIGN KEY (salary_event_id) REFERENCES salary_events(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS bot_settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            );
-
-            INSERT OR IGNORE INTO savings (id, balance, monthly_target)
-            VALUES (1, 0, 23000);
-
-            INSERT OR IGNORE INTO bot_settings (key, value)
-            VALUES ('monthly_life_budget', '60000');
-
-            INSERT OR IGNORE INTO bot_settings (key, value)
-            VALUES ('monthly_savings_target', '23000');
-
-            INSERT OR IGNORE INTO bot_settings (key, value)
-            VALUES ('currency', 'RUB');
-            """
+    if database is None:
+        raise RuntimeError(
+            "D1 database is not configured. "
+            "Call configure_d1(env.DB) first."
         )
 
-        cursor = await db.execute(
-            "PRAGMA table_info(mandatory_payments)"
-        )
+    return database
 
-        columns = await cursor.fetchall()
-        column_names = [column[1] for column in columns]
 
-        if "payment_name" not in column_names:
-            await db.execute(
-                """
-                ALTER TABLE mandatory_payments
-                ADD COLUMN payment_name TEXT
-                """
-            )
+async def fetch_one(
+    query: str,
+    *params,
+):
+    result = await (
+        get_d1()
+        .prepare(query)
+        .bind(*params)
+        .first()
+    )
 
-        cursor = await db.execute(
-            "PRAGMA table_info(salary_events)"
-        )
+    return result
 
-        columns = await cursor.fetchall()
-        column_names = [column[1] for column in columns]
 
-        if "planned_day" not in column_names:
-            await db.execute(
-                """
-                ALTER TABLE salary_events
-                ADD COLUMN planned_day INTEGER
-                """
-            )
+async def fetch_value(
+    query: str,
+    *params,
+):
+    result = await (
+        get_d1()
+        .prepare(query)
+        .bind(*params)
+        .first()
+    )
 
-        await db.commit()
+    if result is None:
+        return None
+
+    if isinstance(result, dict):
+        return next(iter(result.values()), None)
+
+    return result
+
+
+async def fetch_all(
+    query: str,
+    *params,
+):
+    result = await (
+        get_d1()
+        .prepare(query)
+        .bind(*params)
+        .all()
+    )
+
+    return result.results
+
+
+async def execute(
+    query: str,
+    *params,
+):
+    return await (
+        get_d1()
+        .prepare(query)
+        .bind(*params)
+        .run()
+    )
+
+
+async def execute_many(
+    statements: list[tuple[str, tuple]],
+):
+    database = get_d1()
+
+    prepared = [
+        database.prepare(query).bind(*params)
+        for query, params in statements
+    ]
+
+    return await database.batch(prepared)
