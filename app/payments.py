@@ -57,7 +57,10 @@ async def create_salary_event(
             )
             VALUES (?, ?, 'pending')
             """,
-            (event_date, planned_income),
+            (
+                event_date,
+                planned_income,
+            ),
         )
 
         event_id = cursor.lastrowid
@@ -70,6 +73,7 @@ async def create_salary_event(
 async def save_actual_income(
     event_id: int,
     actual_income: float,
+    actual_date: date | None = None,
 ):
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
@@ -97,6 +101,11 @@ async def save_actual_income(
                 "success": False,
                 "error": "Этот доход уже был записан.",
             }
+
+        if actual_date is None:
+            operation_date = event[0]
+        else:
+            operation_date = actual_date.isoformat()
 
         await db.execute(
             """
@@ -129,6 +138,14 @@ async def save_actual_income(
                 "error": "Пользователь не найден.",
             }
 
+        description = "Получение дохода"
+
+        if actual_date is not None:
+            description = (
+                "Получение дохода "
+                "(фактическая дата)"
+            )
+
         await db.execute(
             """
             INSERT INTO operations (
@@ -143,8 +160,8 @@ async def save_actual_income(
             (
                 user[0],
                 actual_income,
-                "Получение дохода",
-                event[0],
+                description,
+                operation_date,
             ),
         )
 
@@ -154,6 +171,7 @@ async def save_actual_income(
         "success": True,
         "event_id": event_id,
         "actual_income": actual_income,
+        "actual_date": operation_date,
     }
 
 
