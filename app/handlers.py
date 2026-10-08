@@ -90,13 +90,6 @@ async def find_early_income_plan(
     """
     Ищет будущий плановый доход,
     который мог прийти раньше установленной даты.
-
-    Например:
-    8 октября + "зарплата 50000"
-    -> зарплата мужа, запланированная на 10 октября.
-
-    Сначала проверяется название дохода,
-    затем точное совпадение плановой суммы.
     """
 
     today = get_moscow_today()
@@ -566,14 +559,94 @@ async def mandatory_payments_button(
 async def balances_button(
     message: Message,
 ):
+    today = get_moscow_today()
+    month = today.strftime("%Y-%m")
+
     balance = await get_current_balance()
 
-    await message.answer(
-        "📊 Балансы\n\n"
-        f"💳 Основной счёт: {balance:,.0f} ₽".replace(
-            ",",
-            " ",
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """
+            SELECT
+                balance,
+                monthly_target
+            FROM savings
+            WHERE id = 1
+            """
         )
+
+        savings_row = await cursor.fetchone()
+
+        cursor = await db.execute(
+            """
+            SELECT
+                COALESCE(SUM(amount), 0)
+            FROM monthly_allocations
+            WHERE month = ?
+              AND category_id IS NULL
+              AND debt_id IS NULL
+              AND source = 'savings'
+            """,
+            (month,),
+        )
+
+        monthly_savings_row = await cursor.fetchone()
+
+        cursor = await db.execute(
+            """
+            SELECT
+                COALESCE(SUM(amount), 0)
+            FROM monthly_allocations
+            WHERE month = ?
+              AND category_id IS NOT NULL
+            """,
+            (month,),
+        )
+
+        category_allocations_row = await cursor.fetchone()
+
+    savings_balance = (
+        savings_row[0]
+        if savings_row
+        else 0
+    )
+
+    savings_target = (
+        savings_row[1]
+        if savings_row
+        else 23000
+    )
+
+    monthly_savings = (
+        monthly_savings_row[0]
+        if monthly_savings_row
+        else 0
+    )
+
+    category_allocations = (
+        category_allocations_row[0]
+        if category_allocations_row
+        else 0
+    )
+
+    savings_remaining = max(
+        savings_target - monthly_savings,
+        0,
+    )
+
+    await message.answer(
+        (
+            "📊 Балансы\n\n"
+            f"💳 Основной счёт: {balance:,.0f} ₽\n\n"
+            f"🐷 Копилка: {savings_balance:,.0f} ₽\n"
+            f"🎯 Отложено в этом месяце: "
+            f"{monthly_savings:,.0f} ₽\n"
+            f"⏳ До цели месяца осталось: "
+            f"{savings_remaining:,.0f} ₽\n\n"
+            f"📦 Распределено по категориям: "
+            f"{category_allocations:,.0f} ₽"
+        ).replace(",", " "),
+        reply_markup=main_menu(),
     )
 
 
@@ -622,20 +695,21 @@ async def savings_button(
         "%Y-%m"
     )
 
-    cursor = await db.execute(
-        """
-        SELECT
-            COALESCE(SUM(amount), 0)
-        FROM monthly_allocations
-        WHERE month = ?
-          AND category_id IS NULL
-          AND debt_id IS NULL
-          AND source = 'savings'
-        """,
-        (month,),
-    )
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """
+            SELECT
+                COALESCE(SUM(amount), 0)
+            FROM monthly_allocations
+            WHERE month = ?
+              AND category_id IS NULL
+              AND debt_id IS NULL
+              AND source = 'savings'
+            """,
+            (month,),
+        )
 
-    monthly_row = await cursor.fetchone()
+        monthly_row = await cursor.fetchone()
 
     monthly_saved = (
         monthly_row[0]
