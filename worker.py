@@ -1,12 +1,1477 @@
-from workers import WorkerEntrypoint, Response
+import json
+from datetime import datetime
+from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
-from app.db import configure_d1
+from workers import WorkerEntrypoint, Response, fetch
+
+from app.db import (
+    configure_d1,
+    execute,
+    fetch_one,
+)
+from app.budget import (
+    add_income,
+    check_expense,
+    get_monthly_report,
+    save_expense,
+)
+from app.payment_flow import (
+    get_current_balance,
+    get_moscow_today,
+    record_actual_income,
+    record_actual_payment,
+)
+from app.payments import (
+    get_mandatory_payment,
+    get_month_mandatory_payments,
+)
+from app.allocation import get_monthly_budget_summary
+from app.scheduler import daily_income_check
 
 
-class Default(WorkerEntrypoint):
-    async def fetch(self, request):
-        configure_d1(self.env.DB)
+CATEGORIES = [
+    "Продукты",
+    "Бензин",
+    "Питомцы",
+    "Дом и быт",
+    "Развлечения и кафе",
+    "Личные покупки",
+    "Здоровье",
+    "Подарки и праздники",
+    "Непредвиденные",
+]
+
+
+def money(value):
+    return f"{float(value or 0):,.0f}".replace(",", " ")
+
+
+def main_menu():
+    return {
+        "keyboard": [
+            [
+                {"text": "💸 Добавить расход"},
+                {"text": "💰 Добавить доход"},
+            ],
+            [
+                {"text": "🏦 Обязательные платежи"},
+                {"text": "📊 Балансы"},
+            ],
+            [
+                {"text": "📅 Отчёт за месяц"},
+                {"text": "🐷 Копилка"},
+            ],
+            [
+                {"text": "⚙️ Настройки"},
+                {"text": "↩️ Отменить последнюю операцию"},
+            ],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+    }
+
+
+def inline(buttons):
+    return {
+        "inline_keyboard": buttons,
+    }
+
+
+def cancel_keyboard():
+    return inline(
+        [
+            [
+                {
+                    "text": "❌ Отмена",
+                    "callback_data": "cancel_action",
+                }
+            ]
+        ]
+    )
+
+
+def categories_keyboard():
+    buttons = []
+
+    for category in CATEGORIES:
+        buttons.append(
+            [
+                {
+                    "text": category,
+                    "callback_data": (
+                        f"expense_category:{category}"
+                    ),
+                }
+            ]
+        )
+
+    buttons.append(
+        [
+            {
+                "text": "❌ Отмена",
+                "callback_data": "cancel_action",
+            }
+        ]
+    )
+
+    return inline(buttons)
+
+
+def confirm_keyboard():
+    return inline(
+        [
+            [
+                {
+                    "text": "✅ Да, записать",
+                    "callback_data": "confirm_expense",
+                },
+                {
+                    "text": "❌ Нет",
+                    "callback_data": "cancel_action",
+                },
+            ]
+        ]
+    )
+
+
+async def telegram_call(
+    token,
+    method,
+    payload,
+):
+    response = await fetch(
+        f"https://api.telegram.org/bot{token}/{method}",
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+        },
+        body=json.dumps(
+            payload,
+            ensure_ascii=False,
+        ),
+    )
+
+    return await response.json()
+
+
+class TelegramBot:
+    def __init__(self, token):
+        self.token = token
+
+    async def send_message(
+        self,
+        chat_id,
+        text,
+        reply_markup=None,
+    ):
+        payload = {
+            "chat_id": chat_id,
+            "text": text,
+        }
+
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+
+        return await telegram_call(
+            self.token,
+            "sendMessage",
+            payload,
+        )
+
+    async def answer_callback(
+        self,
+        callback_id,
+        text=None,
+        show_alert=False,
+    ):
+        payload = {
+            "callback_query_id": callback_id,
+        }
+
+        if text:
+            payload["text"] = text
+
+        if show_alert:
+            payload["show_alert"] = True
+
+        return await telegram_call(
+            self.token,
+            "answerCallbackQuery",
+            payload,
+        )
+
+    async def edit_message(
+        self,
+        chat_id,
+        message_id,
+        text,
+        reply_markup=None,
+    ):
+        payload = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": text,
+        }
+
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+
+        return await telegram_call(
+            self.token,
+            "editMessageText",
+            payload,
+        )
+
+
+async def ensure_runtime_tables():
+    await execute(
+        """
+        CREATE TABLE IF NOT EXISTS bot_state (
+            telegram_id INTEGER PRIMARY KEY,
+            state TEXT,
+            data TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+
+async def ensure_user(
+    telegram_id,
+):
+    await execute(
+        """
+        INSERT OR IGNORE INTO users (
+            telegram_id
+        )
+        VALUES (?)
+        """,
+        telegram_id,
+    )
+
+
+async def get_state(
+    telegram_id,
+):
+    row = await fetch_one(
+        """
+        SELECT
+            state,
+            data
+        FROM bot_state
+        WHERE telegram_id = ?
+        """,
+        telegram_id,
+    )
+
+    if not row:
+        return None, {}
+
+    try:
+        data = json.loads(
+            row["data"] or "{}"
+        )
+    except Exception:
+        data = {}
+
+    return row["state"], data
+
+
+async def set_state(
+    telegram_id,
+    state,
+    data=None,
+):
+    await execute(
+        """
+        INSERT INTO bot_state (
+            telegram_id,
+            state,
+            data,
+            updated_at
+        )
+        VALUES (
+            ?,
+            ?,
+            ?,
+            CURRENT_TIMESTAMP
+        )
+        ON CONFLICT(telegram_id)
+        DO UPDATE SET
+            state = excluded.state,
+            data = excluded.data,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        telegram_id,
+        state,
+        json.dumps(
+            data or {},
+            ensure_ascii=False,
+        ),
+    )
+
+
+async def clear_state(
+    telegram_id,
+):
+    await execute(
+        """
+        DELETE FROM bot_state
+        WHERE telegram_id = ?
+        """,
+        telegram_id,
+    )
+
+
+async def get_pending_income(
+    telegram_id,
+):
+    row = await fetch_one(
+        """
+        SELECT
+            salary_event_id
+        FROM pending_income
+        WHERE telegram_id = ?
+        """,
+        telegram_id,
+    )
+
+    if not row:
+        return None
+
+    return row["salary_event_id"]
+
+
+async def remove_pending_income(
+    telegram_id,
+):
+    await execute(
+        """
+        DELETE FROM pending_income
+        WHERE telegram_id = ?
+        """,
+        telegram_id,
+    )
+
+
+async def send_start(
+    bot,
+    chat_id,
+):
+    await bot.send_message(
+        chat_id,
+        "👋 Привет!\n\n"
+        "Это семейный бюджет.\n\n"
+        "Здесь можно записывать доходы и расходы, "
+        "следить за обязательными платежами, "
+        "бюджетом на жизнь и копилкой.\n\n"
+        "Выбери действие в меню ниже.",
+        main_menu(),
+    )
+
+
+async def send_balances(
+    bot,
+    chat_id,
+):
+    report = await get_monthly_report()
+    budget = await get_monthly_budget_summary()
+
+    lines = [
+        "📊 БАЛАНСЫ",
+        "",
+        "💳 ОСНОВНОЙ СЧЁТ",
+        (
+            f"Реальные деньги: "
+            f"{money(report['main_account'])} ₽"
+        ),
+        "",
+        "🐷 КОПИЛКА",
+        (
+            f"Накоплено всего: "
+            f"{money(report['savings_balance'])} ₽"
+        ),
+        (
+            f"Отложено в этом месяце: "
+            f"{money(report['monthly_savings'])} ₽"
+        ),
+        (
+            f"Цель месяца: "
+            f"{money(report['savings_target'])} ₽"
+        ),
+        (
+            f"До цели осталось: "
+            f"{money(report['savings_remaining'])} ₽"
+        ),
+        "",
+        "🛒 БЮДЖЕТ ЖИЗНИ",
+        (
+            f"Всего на месяц: "
+            f"{money(budget['life_budget'])} ₽"
+        ),
+        (
+            f"Распределено: "
+            f"{money(budget['allocated'])} ₽"
+        ),
+        (
+            f"Реально потрачено: "
+            f"{money(budget['spent'])} ₽"
+        ),
+        (
+            f"Осталось потратить: "
+            f"{money(budget['remaining_to_spend'])} ₽"
+        ),
+        (
+            f"Осталось распределить: "
+            f"{money(budget['remaining_to_allocate'])} ₽"
+        ),
+        "",
+        "📊 КАТЕГОРИИ",
+    ]
+
+    for category in report["categories"]:
+        available = max(
+            category["allocated"]
+            - category["spent"],
+            0,
+        )
+
+        lines.extend(
+            [
+                "",
+                f"• {category['name']}",
+                (
+                    f"  Лимит: "
+                    f"{money(category['limit'])} ₽"
+                ),
+                (
+                    f"  Распределено: "
+                    f"{money(category['allocated'])} ₽"
+                ),
+                (
+                    f"  Потрачено: "
+                    f"{money(category['spent'])} ₽"
+                ),
+                (
+                    f"  Доступно: "
+                    f"{money(available)} ₽"
+                ),
+            ]
+        )
+
+    await bot.send_message(
+        chat_id,
+        "\n".join(lines),
+        main_menu(),
+    )
+
+
+async def send_report(
+    bot,
+    chat_id,
+):
+    report = await get_monthly_report()
+
+    lines = [
+        f"📅 Отчёт за {report['month']}",
+        "",
+        "💰 ДОХОДЫ",
+        (
+            f"За месяц: "
+            f"{money(report['month_income'])} ₽"
+        ),
+        "",
+        "🏦 ОБЯЗАТЕЛЬНЫЕ ПЛАТЕЖИ",
+        (
+            f"💳 Кредиты: "
+            f"{money(report['credit_expenses'])} ₽"
+        ),
+        (
+            f"🏠 Ипотека: "
+            f"{money(report['mortgage_expenses'])} ₽"
+        ),
+        (
+            f"🧾 Коммуналка: "
+            f"{money(report['utilities_expenses'])} ₽"
+        ),
+        "────────────────",
+        (
+            f"Всего: "
+            f"{money(report['mandatory_expenses'])} ₽"
+        ),
+        "",
+        "🛒 РАСХОДЫ НА ЖИЗНЬ",
+        (
+            f"Бюджет: "
+            f"{money(report['life_budget'])} ₽"
+        ),
+        (
+            f"Потрачено: "
+            f"{money(report['life_expenses'])} ₽"
+        ),
+        (
+            f"Осталось: "
+            f"{money(report['life_remaining'])} ₽"
+        ),
+        "",
+        "📊 ПО КАТЕГОРИЯМ",
+    ]
+
+    for category in report["categories"]:
+        lines.extend(
+            [
+                "",
+                f"• {category['name']}",
+                (
+                    f"  Лимит: "
+                    f"{money(category['limit'])} ₽"
+                ),
+                (
+                    f"  Распределено: "
+                    f"{money(category['allocated'])} ₽"
+                ),
+                (
+                    f"  Потрачено: "
+                    f"{money(category['spent'])} ₽"
+                ),
+                (
+                    f"  Осталось: "
+                    f"{money(category['remaining'])} ₽"
+                ),
+            ]
+        )
+
+    lines.extend(
+        [
+            "",
+            "📦 РАСПРЕДЕЛЕНИЕ",
+            (
+                f"Распределено по категориям: "
+                f"{money(report['category_allocations'])} ₽"
+            ),
+            (
+                f"Осталось распределить: "
+                f"{money(report['life_remaining_to_allocate'])} ₽"
+            ),
+            "",
+            "🐷 НАКОПЛЕНИЯ",
+            (
+                f"Отложено в этом месяце: "
+                f"{money(report['monthly_savings'])} ₽"
+            ),
+            (
+                f"Цель месяца: "
+                f"{money(report['savings_target'])} ₽"
+            ),
+            (
+                f"До цели осталось: "
+                f"{money(report['savings_remaining'])} ₽"
+            ),
+            (
+                f"Всего в копилке: "
+                f"{money(report['savings_balance'])} ₽"
+            ),
+            "",
+            "💳 ДЕНЬГИ",
+            (
+                f"Основной счёт: "
+                f"{money(report['main_account'])} ₽"
+            ),
+        ]
+    )
+
+    await bot.send_message(
+        chat_id,
+        "\n".join(lines),
+        main_menu(),
+    )
+
+
+async def send_mandatory(
+    bot,
+    chat_id,
+):
+    month = datetime.now(
+        ZoneInfo("Europe/Moscow")
+    ).strftime("%Y-%m")
+
+    payments = await get_month_mandatory_payments(
+        month
+    )
+
+    if not payments:
+        await bot.send_message(
+            chat_id,
+            "🏦 ОБЯЗАТЕЛЬНЫЕ ПЛАТЕЖИ\n\n"
+            "На текущий месяц платежи ещё не созданы.",
+            main_menu(),
+        )
+        return
+
+    lines = [
+        "🏦 ОБЯЗАТЕЛЬНЫЕ ПЛАТЕЖИ",
+        "",
+    ]
+
+    current_date = None
+    buttons = []
+
+    for payment in payments:
+        if payment["event_date"] != current_date:
+            current_date = payment["event_date"]
+
+            lines.extend(
+                [
+                    (
+                        f"📅 "
+                        f"{current_date[8:10]}."
+                        f"{current_date[5:7]}"
+                    ),
+                    "",
+                ]
+            )
+
+        if payment["status"] == "paid":
+            status = (
+                f"✅ Оплачено: "
+                f"{money(payment['actual_amount'])} ₽"
+            )
+        else:
+            status = "⏳ Не оплачено"
+
+        lines.extend(
+            [
+                f"• {payment['payment_name']}",
+                (
+                    f"  План: "
+                    f"{money(payment['planned_amount'])} ₽"
+                ),
+                f"  {status}",
+                "",
+            ]
+        )
+
+        if payment["status"] != "paid":
+            buttons.append(
+                [
+                    {
+                        "text": (
+                            f"💸 "
+                            f"{payment['payment_name']} — "
+                            f"{money(payment['planned_amount'])} ₽"
+                        ),
+                        "callback_data": (
+                            f"mandatory_payment:"
+                            f"{payment['id']}"
+                        ),
+                    }
+                ]
+            )
+
+    buttons.append(
+        [
+            {
+                "text": "❌ Закрыть",
+                "callback_data": "cancel_action",
+            }
+        ]
+    )
+
+    lines.append(
+        "Нажми на платёж ниже, чтобы записать "
+        "фактическую сумму."
+    )
+
+    await bot.send_message(
+        chat_id,
+        "\n".join(lines),
+        inline(buttons),
+    )
+
+
+async def process_callback(
+    bot,
+    callback,
+):
+    callback_id = callback["id"]
+    data = callback.get("data", "")
+
+    message = (
+        callback.get("message")
+        or {}
+    )
+
+    chat = (
+        message.get("chat")
+        or {}
+    )
+
+    chat_id = chat.get("id")
+    message_id = message.get(
+        "message_id"
+    )
+
+    user_id = (
+        callback.get("from")
+        or {}
+    ).get("id")
+
+    if user_id is None or chat_id is None:
+        return
+
+    await ensure_user(user_id)
+
+    if data == "cancel_action":
+        await clear_state(user_id)
+
+        await bot.answer_callback(
+            callback_id,
+            "Отменено",
+        )
+
+        if message_id:
+            await bot.edit_message(
+                chat_id,
+                message_id,
+                "❌ Действие отменено.",
+            )
+
+        await bot.send_message(
+            chat_id,
+            "Главное меню:",
+            main_menu(),
+        )
+        return
+
+    if data.startswith(
+        "expense_category:"
+    ):
+        category = data.split(
+            ":",
+            1,
+        )[1]
+
+        state, state_data = await get_state(
+            user_id
+        )
+
+        if state != "expense_category":
+            await bot.answer_callback(
+                callback_id,
+                "Сессия добавления расхода закончилась.",
+                True,
+            )
+            return
+
+        amount = state_data.get(
+            "amount"
+        )
+
+        if amount is None:
+            await clear_state(
+                user_id
+            )
+
+            await bot.answer_callback(
+                callback_id,
+                "Сессия добавления расхода закончилась.",
+                True,
+            )
+            return
+
+        await set_state(
+            user_id,
+            "expense_description",
+            {
+                "amount": amount,
+                "category": category,
+            },
+        )
+
+        await bot.answer_callback(
+            callback_id
+        )
+
+        await bot.edit_message(
+            chat_id,
+            message_id,
+            (
+                f"📂 Категория: {category}\n"
+                f"💸 Сумма: {money(amount)} ₽\n\n"
+                "Напиши, на что потрачено.\n"
+                "Если описание не нужно — напиши «-»."
+            ),
+        )
+        return
+
+    if data == "confirm_expense":
+        state, state_data = await get_state(
+            user_id
+        )
+
+        if state != "expense_confirm":
+            await bot.answer_callback(
+                callback_id,
+                "Сессия добавления расхода закончилась.",
+                True,
+            )
+            return
+
+        result = await save_expense(
+            telegram_id=user_id,
+            amount=state_data["amount"],
+            category_name=state_data["category"],
+            description=state_data.get(
+                "description",
+                "",
+            ),
+        )
+
+        await clear_state(
+            user_id
+        )
+
+        if not result["success"]:
+            await bot.answer_callback(
+                callback_id
+            )
+
+            await bot.edit_message(
+                chat_id,
+                message_id,
+                f"❌ {result['error']}",
+            )
+
+            await bot.send_message(
+                chat_id,
+                "Главное меню:",
+                main_menu(),
+            )
+            return
+
+        balance = await get_current_balance()
+
+        await bot.answer_callback(
+            callback_id,
+            "Расход записан!",
+        )
+
+        await bot.edit_message(
+            chat_id,
+            message_id,
+            (
+                "✅ Расход записан.\n\n"
+                f"Сумма: "
+                f"{money(state_data['amount'])} ₽\n"
+                f"Категория: "
+                f"{state_data['category']}"
+            ),
+        )
+
+        await bot.send_message(
+            chat_id,
+            (
+                f"💳 Основной счёт: "
+                f"{money(balance)} ₽"
+            ),
+            main_menu(),
+        )
+        return
+
+    if data.startswith(
+        "mandatory_payment:"
+    ):
+        try:
+            payment_id = int(
+                data.split(
+                    ":",
+                    1,
+                )[1]
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            await bot.answer_callback(
+                callback_id,
+                "Не удалось определить платёж.",
+                True,
+            )
+            return
+
+        payment = await get_mandatory_payment(
+            payment_id
+        )
+
+        if not payment:
+            await bot.answer_callback(
+                callback_id,
+                "Платёж не найден.",
+                True,
+            )
+            return
+
+        if payment["status"] == "paid":
+            await bot.answer_callback(
+                callback_id,
+                "Этот платёж уже записан.",
+                True,
+            )
+            return
+
+        await set_state(
+            user_id,
+            "payment_amount",
+            {
+                "payment_id": payment_id,
+                "payment_name": (
+                    payment["payment_name"]
+                ),
+                "planned": (
+                    payment["planned_amount"]
+                ),
+            },
+        )
+
+        await bot.answer_callback(
+            callback_id
+        )
+
+        await bot.edit_message(
+            chat_id,
+            message_id,
+            (
+                "🏦 ОБЯЗАТЕЛЬНЫЙ ПЛАТЁЖ\n\n"
+                f"Платёж: "
+                f"{payment['payment_name']}\n"
+                f"План: "
+                f"{money(payment['planned_amount'])} ₽\n\n"
+                "Введи фактическую сумму."
+            ),
+            cancel_keyboard(),
+        )
+        return
+
+    await bot.answer_callback(
+        callback_id
+    )
+
+
+async def process_message(
+    bot,
+    message,
+):
+    chat = (
+        message.get("chat")
+        or {}
+    )
+
+    user = (
+        message.get("from")
+        or {}
+    )
+
+    chat_id = chat.get("id")
+    user_id = user.get("id")
+
+    text = (
+        message.get("text")
+        or ""
+    ).strip()
+
+    if chat_id is None or user_id is None:
+        return
+
+    await ensure_user(
+        user_id
+    )
+
+    if text.startswith("/start"):
+        await clear_state(
+            user_id
+        )
+
+        await remove_pending_income(
+            user_id
+        )
+
+        await send_start(
+            bot,
+            chat_id,
+        )
+        return
+
+    if text == "↩️ Отменить последнюю операцию":
+        await clear_state(
+            user_id
+        )
+
+        await bot.send_message(
+            chat_id,
+            (
+                "↩️ Отмена последней операции "
+                "пока недоступна."
+            ),
+            main_menu(),
+        )
+        return
+
+    pending_event_id = await get_pending_income(
+        user_id
+    )
+
+    if pending_event_id is not None and text:
+        try:
+            amount = float(
+                text
+                .replace(" ", "")
+                .replace(",", ".")
+            )
+        except ValueError:
+            amount = None
+
+        if amount is not None and amount > 0:
+            result = await record_actual_income(
+                event_id=pending_event_id,
+                actual_income=amount,
+                actual_date=get_moscow_today(),
+                telegram_id=user_id,
+            )
+
+            await remove_pending_income(
+                user_id
+            )
+
+            await clear_state(
+                user_id
+            )
+
+            if result["success"]:
+                await bot.send_message(
+                    chat_id,
+                    (
+                        "✅ Доход записан.\n\n"
+                        f"Фактически: "
+                        f"{money(amount)} ₽\n"
+                        f"Основной счёт: "
+                        f"{money(await get_current_balance())} ₽"
+                    ),
+                    main_menu(),
+                )
+            else:
+                await bot.send_message(
+                    chat_id,
+                    f"❌ {result['error']}",
+                    main_menu(),
+                )
+
+            return
+
+    state, state_data = await get_state(
+        user_id
+    )
+
+    if state == "income_amount":
+        try:
+            amount = float(
+                text
+                .replace(" ", "")
+                .replace(",", ".")
+            )
+        except ValueError:
+            amount = 0
+
+        if amount <= 0:
+            await bot.send_message(
+                chat_id,
+                "❌ Введи сумму больше нуля.",
+            )
+            return
+
+        result = await add_income(
+            telegram_id=user_id,
+            amount=amount,
+            description="Доход",
+        )
+
+        await clear_state(
+            user_id
+        )
+
+        if not result["success"]:
+            await bot.send_message(
+                chat_id,
+                f"❌ {result['error']}",
+                main_menu(),
+            )
+            return
+
+        await bot.send_message(
+            chat_id,
+            (
+                "✅ Доход записан.\n\n"
+                f"Сумма: {money(amount)} ₽\n"
+                f"Основной счёт: "
+                f"{money(await get_current_balance())} ₽"
+            ),
+            main_menu(),
+        )
+        return
+
+    if state == "expense_amount":
+        try:
+            amount = float(
+                text
+                .replace(" ", "")
+                .replace(",", ".")
+            )
+        except ValueError:
+            amount = 0
+
+        if amount <= 0:
+            await bot.send_message(
+                chat_id,
+                "❌ Введи сумму больше нуля.",
+            )
+            return
+
+        await set_state(
+            user_id,
+            "expense_category",
+            {
+                "amount": amount,
+            },
+        )
+
+        await bot.send_message(
+            chat_id,
+            "📂 Выбери категорию расхода:",
+            categories_keyboard(),
+        )
+        return
+
+    if state == "expense_description":
+        description = (
+            ""
+            if text == "-"
+            else text
+        )
+
+        await set_state(
+            user_id,
+            "expense_confirm",
+            {
+                **state_data,
+                "description": description,
+            },
+        )
+
+        check = await check_expense(
+            telegram_id=user_id,
+            amount=state_data["amount"],
+            category_name=state_data["category"],
+        )
+
+        warning = ""
+
+        if check.get("exceeded"):
+            warning = (
+                "\n\n⚠️ Внимание: расход превышает "
+                "оставшийся лимит категории."
+            )
+
+        description_text = (
+            description
+            or "без описания"
+        )
+
+        await bot.send_message(
+            chat_id,
+            (
+                "🧾 Проверь расход:\n\n"
+                f"Сумма: "
+                f"{money(state_data['amount'])} ₽\n"
+                f"Категория: "
+                f"{state_data['category']}\n"
+                f"Описание: "
+                f"{description_text}"
+                f"{warning}\n\n"
+                "Записать расход?"
+            ),
+            confirm_keyboard(),
+        )
+        return
+
+    if state == "payment_amount":
+        try:
+            amount = float(
+                text
+                .replace(" ", "")
+                .replace(",", ".")
+            )
+        except ValueError:
+            amount = 0
+
+        if amount <= 0:
+            await bot.send_message(
+                chat_id,
+                "❌ Введи сумму больше нуля.",
+            )
+            return
+
+        result = await record_actual_payment(
+            payment_id=state_data[
+                "payment_id"
+            ],
+            actual_amount=amount,
+            telegram_id=user_id,
+        )
+
+        await clear_state(
+            user_id
+        )
+
+        if not result["success"]:
+            await bot.send_message(
+                chat_id,
+                f"❌ {result['error']}",
+                main_menu(),
+            )
+            return
+
+        await bot.send_message(
+            chat_id,
+            (
+                "✅ Платёж записан.\n\n"
+                f"Платёж: "
+                f"{state_data['payment_name']}\n"
+                f"Фактически: "
+                f"{money(amount)} ₽\n"
+                f"💳 Основной счёт: "
+                f"{money(await get_current_balance())} ₽"
+            ),
+            main_menu(),
+        )
+        return
+
+    if text == "💰 Добавить доход":
+        await set_state(
+            user_id,
+            "income_amount",
+        )
+
+        await bot.send_message(
+            chat_id,
+            (
+                "💰 Введи сумму дохода.\n\n"
+                "Например: 50000"
+            ),
+            cancel_keyboard(),
+        )
+        return
+
+    if text == "💸 Добавить расход":
+        await set_state(
+            user_id,
+            "expense_amount",
+        )
+
+        await bot.send_message(
+            chat_id,
+            (
+                "💸 Сначала введи сумму расхода.\n\n"
+                "Например: 1250"
+            ),
+            cancel_keyboard(),
+        )
+        return
+
+    if text == "🏦 Обязательные платежи":
+        await clear_state(
+            user_id
+        )
+
+        await send_mandatory(
+            bot,
+            chat_id,
+        )
+        return
+
+    if text == "📊 Балансы":
+        await clear_state(
+            user_id
+        )
+
+        await send_balances(
+            bot,
+            chat_id,
+        )
+        return
+
+    if text == "📅 Отчёт за месяц":
+        await clear_state(
+            user_id
+        )
+
+        await send_report(
+            bot,
+            chat_id,
+        )
+        return
+
+    if text == "🐷 Копилка":
+        report = await get_monthly_report()
+
+        await bot.send_message(
+            chat_id,
+            (
+                "🐷 КОПИЛКА\n\n"
+                f"Накоплено всего: "
+                f"{money(report['savings_balance'])} ₽\n"
+                f"Отложено в этом месяце: "
+                f"{money(report['monthly_savings'])} ₽\n"
+                f"Цель месяца: "
+                f"{money(report['savings_target'])} ₽\n"
+                f"До цели осталось: "
+                f"{money(report['savings_remaining'])} ₽"
+            ),
+            main_menu(),
+        )
+        return
+
+    if text == "⚙️ Настройки":
+        await bot.send_message(
+            chat_id,
+            (
+                "⚙️ Настройки\n\n"
+                "Основные параметры бюджета "
+                "задаются в базе данных."
+            ),
+            main_menu(),
+        )
+        return
+
+    await bot.send_message(
+        chat_id,
+        (
+            "Не поняла команду. "
+            "Выбери действие в меню."
+        ),
+        main_menu(),
+    )
+
+
+class Default(
+    WorkerEntrypoint
+):
+    async def fetch(
+        self,
+        request,
+    ):
+        configure_d1(
+            self.env.DB
+        )
+
+        await ensure_runtime_tables()
+
+        url = urlparse(
+            request.url
+        )
+
+        token = getattr(
+            self.env,
+            "BOT_TOKEN",
+            None,
+        )
+
+        if url.path == "/health":
+            return Response.json(
+                {
+                    "status": "ok",
+                    "worker": "familu-budget",
+                }
+            )
+
+        if not token:
+            return Response(
+                "BOT_TOKEN secret is not configured.",
+                status=500,
+            )
+
+        if url.path == "/telegram/webhook":
+            expected = getattr(
+                self.env,
+                "TELEGRAM_WEBHOOK_SECRET",
+                None,
+            )
+
+            if expected:
+                received = request.headers.get(
+                    "x-telegram-bot-api-secret-token"
+                )
+
+                if received != expected:
+                    return Response(
+                        "Unauthorized",
+                        status=401,
+                    )
+
+            update = await request.json()
+
+            bot = TelegramBot(
+                token
+            )
+
+            if update.get(
+                "callback_query"
+            ):
+                await process_callback(
+                    bot,
+                    update["callback_query"],
+                )
+
+            elif update.get(
+                "message"
+            ):
+                await process_message(
+                    bot,
+                    update["message"],
+                )
+
+            return Response(
+                "ok"
+            )
 
         return Response(
-            "Family Budget bot is starting!"
+            "Family Budget bot is running."
+        )
+
+    async def scheduled(
+        self,
+        controller,
+        env,
+        ctx,
+    ):
+        configure_d1(
+            env.DB
+        )
+
+        await ensure_runtime_tables()
+
+        token = getattr(
+            env,
+            "BOT_TOKEN",
+            None,
+        )
+
+        if not token:
+            return
+
+        bot = TelegramBot(
+            token
+        )
+
+        await daily_income_check(
+            bot
         )
