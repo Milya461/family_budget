@@ -4,5 +4,5 @@ description = "Family Budget Telegram Bot"
 requires-python = ">=3.11"
 
 dependencies = [
-    "workers-py",
+    "workers-py>=1.9",
 ]
