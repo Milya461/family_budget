@@ -13,7 +13,8 @@ from app.payment_flow import (
 @pytest.mark.asyncio
 async def test_start_income_event():
     await init_db()
-await setup()
+    await setup()
+
     result = await start_income_event(
         date(2026, 10, 10)
     )
@@ -37,7 +38,8 @@ await setup()
 @pytest.mark.asyncio
 async def test_last_day_of_month_uses_day_30():
     await init_db()
-await setup()
+    await setup()
+
     result = await start_income_event(
         date(2026, 10, 31)
     )
@@ -50,7 +52,8 @@ await setup()
 @pytest.mark.asyncio
 async def test_current_balance():
     await init_db()
-await setup()
+    await setup()
+
     balance = await get_current_balance()
 
     assert balance >= 0
