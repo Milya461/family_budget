@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import aiosqlite
@@ -11,11 +11,17 @@ from app.payment_flow import (
 )
 
 
-TIMEZONE = ZoneInfo("Europe/Moscow")
+MOSCOW_TIMEZONE = ZoneInfo("Europe/Moscow")
 
 scheduler = AsyncIOScheduler(
-    timezone=TIMEZONE
+    timezone=MOSCOW_TIMEZONE
 )
+
+
+def get_moscow_today():
+    return datetime.now(
+        MOSCOW_TIMEZONE
+    ).date()
 
 
 async def get_users():
@@ -106,7 +112,7 @@ async def remove_pending_income(
 async def build_income_message(
     planned_day: int,
 ):
-    message_date = date.today()
+    message_date = get_moscow_today()
 
     income_event = await find_income_event(
         planned_day=planned_day,
@@ -205,7 +211,7 @@ async def send_income_prompt(
 
 
 async def daily_income_check(bot):
-    today = date.today()
+    today = get_moscow_today()
 
     if today.day in (10, 15, 25, 30):
         await send_income_prompt(
@@ -213,20 +219,13 @@ async def daily_income_check(bot):
             planned_day=today.day,
         )
 
-    last_day = (
-        today.replace(
-            day=28
-        )
-        .replace(
-            day=calendar_last_day(
-                today.year,
-                today.month,
-            )
-        )
+    last_day = calendar_last_day(
+        today.year,
+        today.month,
     )
 
     if (
-        last_day.day == 31
+        today.day == last_day
         and today.day == 31
     ):
         await send_income_prompt(
