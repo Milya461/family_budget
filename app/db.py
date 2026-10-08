@@ -86,6 +86,7 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS mandatory_payments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 salary_event_id INTEGER NOT NULL,
+                payment_name TEXT,
                 debt_id INTEGER,
                 planned_amount REAL NOT NULL DEFAULT 0,
                 actual_amount REAL,
@@ -107,8 +108,29 @@ async def init_db():
             VALUES ('monthly_life_budget', '60000');
 
             INSERT OR IGNORE INTO bot_settings (key, value)
+            VALUES ('monthly_savings_target', '23000');
+
+            INSERT OR IGNORE INTO bot_settings (key, value)
             VALUES ('currency', 'RUB');
             """
         )
+
+        # Миграция существующей базы:
+        # если таблица mandatory_payments была создана
+        # старой версией программы, добавляем payment_name.
+        cursor = await db.execute(
+            "PRAGMA table_info(mandatory_payments)"
+        )
+
+        columns = await cursor.fetchall()
+        column_names = [column[1] for column in columns]
+
+        if "payment_name" not in column_names:
+            await db.execute(
+                """
+                ALTER TABLE mandatory_payments
+                ADD COLUMN payment_name TEXT
+                """
+            )
 
         await db.commit()
