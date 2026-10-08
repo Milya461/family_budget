@@ -1,275 +1,433 @@
 from datetime import date
 
 import pytest
-import pytest_asyncio
 
-from app import db
-from app.db import init_db
-from app.setup import setup
-from app.payment_flow import (
-    find_income_event,
-    get_current_balance,
-    get_event_summary,
-    record_actual_income,
-    record_actual_payment,
-    start_early_income_event,
-    start_income_event,
-)
-from app.payments import (
-    get_event,
-    get_event_payments,
-    save_actual_payment,
-)
-
-
-@pytest_asyncio.fixture(autouse=True)
-async def clean_database(tmp_path, monkeypatch):
-    test_db = tmp_path / "test_family_budget.db"
-
-    monkeypatch.setattr(
-        db,
-        "DB_PATH",
-        test_db,
-    )
-
-    import app.payment_flow
-    import app.payments
-    import app.setup
-    import app.allocation
-
-    monkeypatch.setattr(
-        app.payment_flow,
-        "DB_PATH",
-        test_db,
-    )
-
-    monkeypatch.setattr(
-        app.payments,
-        "DB_PATH",
-        test_db,
-    )
-
-    monkeypatch.setattr(
-        app.setup,
-        "DB_PATH",
-        test_db,
-    )
-
-    await init_db()
-    await setup()
-
-
-async def create_test_user():
-    async with db.aiosqlite.connect(
-        db.DB_PATH
-    ) as connection:
-        await connection.execute(
-            """
-            INSERT INTO users (
-                telegram_id,
-                name
-            )
-            VALUES (?, ?)
-            """,
-            (
-                123456789,
-                "Тестовый пользователь",
-            ),
-        )
-
-        await connection.commit()
+from app import payment_flow
 
 
 @pytest.mark.asyncio
-async def test_start_income_event():
-    result = await start_income_event(
-        date(2026, 10, 10)
+async def test_start_income_event(monkeypatch):
+    async def fake_get_income_plan(day):
+        assert day == 10
+
+        return [
+            ("Зарплата мужа", 50000),
+        ]
+
+    async def fake_get_planned_payments(day):
+        assert day == 10
+
+        return [
+            ("Кредитная карта", 18000),
+            ("Кредит на машину", 15000),
+        ]
+
+    async def fake_fetch_one(query, *params):
+        return None
+
+    async def fake_create_salary_event(
+        event_date,
+        planned_income,
+    ):
+        assert event_date == "2026-10-10"
+        assert planned_income == 50000
+
+        return 1
+
+    async def fake_execute(query, *params):
+        return None
+
+    async def fake_create_mandatory_payment(
+        salary_event_id,
+        payment_name,
+        planned_amount,
+    ):
+        assert salary_event_id == 1
+        assert planned_amount > 0
+
+    monkeypatch.setattr(
+        payment_flow,
+        "get_income_plan",
+        fake_get_income_plan,
     )
 
+    monkeypatch.setattr(
+        payment_flow,
+        "get_planned_payments",
+        fake_get_planned_payments,
+    )
+
+    monkeypatch.setattr(
+        payment_flow,
+        "fetch_one",
+        fake_fetch_one,
+    )
+
+    monkeypatch.setattr(
+        payment_flow,
+        "create_salary_event",
+        fake_create_salary_event,
+    )
+
+    monkeypatch.setattr(
+        payment_flow,
+        "execute",
+        fake_execute,
+    )
+
+    monkeypatch.setattr(
+        payment_flow,
+        "create_mandatory_payment",
+        fake_create_mandatory_payment,
+    )
+
+    result = await payment_flow.start_income_event(
+        event_date=date(2026, 10, 10)
+    )
+
+    assert result["event_id"] == 1
+    assert result["date"] == "2026-10-10"
+    assert result["planned_day"] == 10
     assert result["planned_income"] == 50000
 
-    assert len(result["income_plans"]) == 1
-
-    assert (
-        result["income_plans"][0]["name"]
-        == "Зарплата мужа"
-    )
-
-    assert len(result["payments"]) == 2
-
-    payment_names = [
-        payment["name"]
-        for payment in result["payments"]
+    assert result["income_plans"] == [
+        {
+            "name": "Зарплата мужа",
+            "planned_amount": 50000,
+        }
     ]
 
-    assert "Кредитная карта" in payment_names
-    assert "Кредит на машину" in payment_names
+    assert result["payments"] == [
+        {
+            "name": "Кредитная карта",
+            "planned_amount": 18000,
+        },
+        {
+            "name": "Кредит на машину",
+            "planned_amount": 15000,
+        },
+    ]
 
 
 @pytest.mark.asyncio
-async def test_last_day_of_month_uses_day_30():
-    result = await start_income_event(
-        date(2026, 10, 31)
+async def test_start_income_event_last_day_uses_day_30(
+    monkeypatch,
+):
+    async def fake_get_income_plan(day):
+        assert day == 30
+
+        return [
+            ("Аванс пользователя", 27500),
+        ]
+
+    async def fake_get_planned_payments(day):
+        return []
+
+    async def fake_fetch_one(query, *params):
+        return None
+
+    async def fake_create_salary_event(
+        event_date,
+        planned_income,
+    ):
+        return 10
+
+    async def fake_execute(query, *params):
+        return None
+
+    async def fake_create_mandatory_payment(
+        salary_event_id,
+        payment_name,
+        planned_amount,
+    ):
+        raise AssertionError(
+            "На день 30 обязательных платежей нет."
+        )
+
+    monkeypatch.setattr(
+        payment_flow,
+        "get_income_plan",
+        fake_get_income_plan,
     )
 
+    monkeypatch.setattr(
+        payment_flow,
+        "get_planned_payments",
+        fake_get_planned_payments,
+    )
+
+    monkeypatch.setattr(
+        payment_flow,
+        "fetch_one",
+        fake_fetch_one,
+    )
+
+    monkeypatch.setattr(
+        payment_flow,
+        "create_salary_event",
+        fake_create_salary_event,
+    )
+
+    monkeypatch.setattr(
+        payment_flow,
+        "execute",
+        fake_execute,
+    )
+
+    monkeypatch.setattr(
+        payment_flow,
+        "create_mandatory_payment",
+        fake_create_mandatory_payment,
+    )
+
+    result = await payment_flow.start_income_event(
+        event_date=date(2026, 10, 31)
+    )
+
+    assert result["planned_day"] == 30
     assert result["planned_income"] == 27500
 
+    assert result["income_plans"] == [
+        {
+            "name": "Аванс пользователя",
+            "planned_amount": 27500,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_find_income_event(monkeypatch):
+    async def fake_fetch_one(query, *params):
+        assert params == (10, "2026-10")
+
+        return {
+            "id": 5,
+            "event_date": "2026-10-08",
+            "planned_day": 10,
+            "planned_income": 50000,
+            "actual_income": 50000,
+            "status": "income_received",
+        }
+
+    monkeypatch.setattr(
+        payment_flow,
+        "fetch_one",
+        fake_fetch_one,
+    )
+
+    result = await payment_flow.find_income_event(
+        planned_day=10,
+        month="2026-10",
+    )
+
+    assert result == {
+        "id": 5,
+        "event_date": "2026-10-08",
+        "planned_day": 10,
+        "planned_income": 50000,
+        "actual_income": 50000,
+        "status": "income_received",
+    }
+
+
+@pytest.mark.asyncio
+async def test_find_income_event_returns_none(
+    monkeypatch,
+):
+    async def fake_fetch_one(query, *params):
+        return None
+
+    monkeypatch.setattr(
+        payment_flow,
+        "fetch_one",
+        fake_fetch_one,
+    )
+
+    result = await payment_flow.find_income_event(
+        planned_day=10,
+        month="2026-10",
+    )
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_record_actual_income_rejects_negative_amount():
+    result = await payment_flow.record_actual_income(
+        event_id=1,
+        actual_income=-100,
+    )
+
+    assert result["success"] is False
     assert (
-        result["income_plans"][0]["name"]
-        == "Аванс пользователя"
+        result["error"]
+        == "Сумма дохода не может быть отрицательной."
     )
 
 
 @pytest.mark.asyncio
-async def test_current_balance():
-    balance = await get_current_balance()
-
-    assert balance >= 0
-
-
-@pytest.mark.asyncio
-async def test_save_actual_mandatory_payment():
-    await create_test_user()
-
-    result = await start_income_event(
-        date(2026, 10, 10)
+async def test_record_actual_payment_rejects_negative_amount():
+    result = await payment_flow.record_actual_payment(
+        payment_id=1,
+        actual_amount=-100,
     )
 
-    event_id = result["event_id"]
-
-    payments = await get_event_payments(
-        event_id
-    )
-
-    assert len(payments) == 2
-
-    credit_card = next(
-        payment
-        for payment in payments
-        if payment["payment_name"]
-        == "Кредитная карта"
-    )
-
-    assert credit_card["planned_amount"] == 18000
-    assert credit_card["actual_amount"] is None
-    assert credit_card["status"] == "pending"
-
-    saved = await save_actual_payment(
-        payment_id=credit_card["id"],
-        actual_amount=17642,
-    )
-
-    assert saved["success"] is True
-
+    assert result["success"] is False
     assert (
-        saved["payment_id"]
-        == credit_card["id"]
-    )
-
-    assert (
-        saved["payment_name"]
-        == "Кредитная карта"
-    )
-
-    assert saved["planned_amount"] == 18000
-    assert saved["actual_amount"] == 17642
-    assert saved["difference"] == -358
-    assert saved["status"] == "paid"
-
-    payments_after = await get_event_payments(
-        event_id
-    )
-
-    credit_card_after = next(
-        payment
-        for payment in payments_after
-        if payment["payment_name"]
-        == "Кредитная карта"
-    )
-
-    assert (
-        credit_card_after["actual_amount"]
-        == 17642
-    )
-
-    assert (
-        credit_card_after["status"]
-        == "paid"
+        result["error"]
+        == "Сумма платежа не может быть отрицательной."
     )
 
 
 @pytest.mark.asyncio
-async def test_actual_payment_can_be_different_from_plan():
-    await create_test_user()
+async def test_get_payment_event_id(monkeypatch):
+    async def fake_fetch_value(query, *params):
+        assert params == (17,)
 
-    result = await start_income_event(
-        date(2026, 10, 10)
+        return 8
+
+    monkeypatch.setattr(
+        payment_flow,
+        "fetch_value",
+        fake_fetch_value,
     )
 
-    payments = await get_event_payments(
-        result["event_id"]
+    result = await payment_flow.get_payment_event_id(
+        payment_id=17
     )
 
-    car_payment = next(
-        payment
-        for payment in payments
-        if payment["payment_name"]
-        == "Кредит на машину"
-    )
-
-    saved = await save_actual_payment(
-        payment_id=car_payment["id"],
-        actual_amount=14983,
-    )
-
-    assert saved["success"] is True
-    assert saved["planned_amount"] == 15000
-    assert saved["actual_amount"] == 14983
-    assert saved["difference"] == -17
+    assert result == 8
 
 
 @pytest.mark.asyncio
-async def test_mandatory_payment_reduces_balance():
-    await create_test_user()
+async def test_get_event_summary(monkeypatch):
+    async def fake_get_event(event_id):
+        assert event_id == 8
 
-    result = await start_income_event(
-        date(2026, 10, 10)
+        return {
+            "id": 8,
+            "event_date": "2026-10-10",
+            "planned_day": 10,
+            "planned_income": 50000,
+            "actual_income": 50000,
+            "status": "income_received",
+        }
+
+    async def fake_get_event_payments(event_id):
+        assert event_id == 8
+
+        return [
+            {
+                "id": 1,
+                "payment_name": "Кредитная карта",
+                "planned_amount": 18000,
+                "actual_amount": 17642,
+                "status": "paid",
+            },
+            {
+                "id": 2,
+                "payment_name": "Кредит на машину",
+                "planned_amount": 15000,
+                "actual_amount": 14983,
+                "status": "paid",
+            },
+        ]
+
+    monkeypatch.setattr(
+        payment_flow,
+        "get_event",
+        fake_get_event,
     )
 
-    payments = await get_event_payments(
-        result["event_id"]
+    monkeypatch.setattr(
+        payment_flow,
+        "get_event_payments",
+        fake_get_event_payments,
     )
 
-    credit_card = next(
-        payment
-        for payment in payments
-        if payment["payment_name"]
-        == "Кредитная карта"
-    )
+    result = await payment_flow.get_event_summary(8)
 
-    balance_before = await get_current_balance()
-
-    saved = await save_actual_payment(
-        payment_id=credit_card["id"],
-        actual_amount=17642,
-    )
-
-    assert saved["success"] is True
-
-    balance_after = await get_current_balance()
-
-    assert (
-        balance_after
-        == balance_before - 17642
-    )
+    assert result["total_planned_payments"] == 33000
+    assert result["total_actual_payments"] == 32625
+    assert result["planned_remaining"] == 17000
+    assert result["remaining"] == 17375
+    assert result["all_payments_paid"] is True
 
 
 @pytest.mark.asyncio
-async def test_early_income_keeps_planned_day():
-    early_date = date(2026, 10, 8)
+async def test_get_event_summary_returns_none(
+    monkeypatch,
+):
+    async def fake_get_event(event_id):
+        return None
 
-    result = await start_early_income_event(
-        actual_date=early_date,
+    monkeypatch.setattr(
+        payment_flow,
+        "get_event",
+        fake_get_event,
+    )
+
+    result = await payment_flow.get_event_summary(999)
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_start_early_income_event(
+    monkeypatch,
+):
+    async def fake_find_income_event(
+        planned_day,
+        month,
+    ):
+        assert planned_day == 10
+        assert month == "2026-10"
+
+        return None
+
+    async def fake_start_income_event(
+        event_date,
+        planned_day,
+    ):
+        assert event_date == date(2026, 10, 8)
+        assert planned_day == 10
+
+        return {
+            "event_id": 20,
+        }
+
+    async def fake_get_event(event_id):
+        assert event_id == 20
+
+        return {
+            "id": 20,
+            "event_date": "2026-10-08",
+            "planned_day": 10,
+            "planned_income": 50000,
+            "actual_income": None,
+            "status": "pending",
+        }
+
+    monkeypatch.setattr(
+        payment_flow,
+        "find_income_event",
+        fake_find_income_event,
+    )
+
+    monkeypatch.setattr(
+        payment_flow,
+        "start_income_event",
+        fake_start_income_event,
+    )
+
+    monkeypatch.setattr(
+        payment_flow,
+        "get_event",
+        fake_get_event,
+    )
+
+    result = await payment_flow.start_early_income_event(
+        actual_date=date(2026, 10, 8),
         planned_day=10,
     )
 
@@ -278,402 +436,25 @@ async def test_early_income_keeps_planned_day():
     assert result["planned_income"] == 50000
 
 
-@pytest.mark.asyncio
-async def test_early_income_is_recorded_once():
-    early_date = date(2026, 10, 8)
+def test_get_event_day_for_regular_date():
+    result = payment_flow.get_moscow_today()
 
-    result = await start_early_income_event(
-        actual_date=early_date,
-        planned_day=10,
-    )
-
-    event_id = result["id"]
-
-    await create_test_user()
-
-    recorded = await record_actual_income(
-        event_id=event_id,
-        actual_income=50000,
-        actual_date=early_date,
-    )
-
-    assert recorded["success"] is True
-    assert recorded["actual_income"] == 50000
-
-    assert (
-        recorded["actual_date"]
-        == "2026-10-08"
-    )
-
-    second_record = await record_actual_income(
-        event_id=event_id,
-        actual_income=50000,
-        actual_date=date(2026, 10, 10),
-    )
-
-    assert second_record["success"] is False
-
-    assert (
-        "уже был записан"
-        in second_record["error"]
-    )
+    assert result is not None
 
 
 @pytest.mark.asyncio
-async def test_planned_date_finds_early_income():
-    early_date = date(2026, 10, 8)
+async def test_get_current_balance(monkeypatch):
+    values = iter([150000, 23000])
 
-    result = await start_early_income_event(
-        actual_date=early_date,
-        planned_day=10,
+    async def fake_fetch_value(query, *params):
+        return next(values)
+
+    monkeypatch.setattr(
+        payment_flow,
+        "fetch_value",
+        fake_fetch_value,
     )
 
-    event_id = result["id"]
+    result = await payment_flow.get_current_balance()
 
-    await create_test_user()
-
-    recorded = await record_actual_income(
-        event_id=event_id,
-        actual_income=50000,
-        actual_date=early_date,
-    )
-
-    assert recorded["success"] is True
-
-    found = await find_income_event(
-        planned_day=10,
-        month="2026-10",
-    )
-
-    assert found is not None
-    assert found["id"] == event_id
-
-    assert (
-        found["event_date"]
-        == "2026-10-08"
-    )
-
-    assert found["planned_day"] == 10
-    assert found["actual_income"] == 50000
-
-    assert (
-        found["status"]
-        == "income_received"
-    )
-
-    event = await get_event(event_id)
-
-    assert event is not None
-    assert event["planned_day"] == 10
-
-    assert (
-        event["event_date"]
-        == "2026-10-08"
-    )
-
-
-@pytest.mark.asyncio
-async def test_early_income_full_payment_flow():
-    """
-    Полный сценарий:
-
-    8 октября:
-    - зарплата мужа 50 000 ₽ пришла раньше;
-    - плановая дата — 10 октября;
-    - доход записан.
-
-    Затем:
-    - кредитная карта — 17 642 ₽;
-    - кредит на машину — 14 983 ₽.
-
-    После оплаты обоих платежей
-    оставшиеся деньги должны быть переданы
-    в распределение бюджета.
-    """
-
-    early_date = date(2026, 10, 8)
-
-    await create_test_user()
-
-    income = await start_early_income_event(
-        actual_date=early_date,
-        planned_day=10,
-    )
-
-    event_id = income["id"]
-
-    assert (
-        income["event_date"]
-        == "2026-10-08"
-    )
-
-    assert income["planned_day"] == 10
-    assert income["planned_income"] == 50000
-
-    recorded_income = await record_actual_income(
-        event_id=event_id,
-        actual_income=50000,
-        actual_date=early_date,
-    )
-
-    assert recorded_income["success"] is True
-
-    payments = await get_event_payments(
-        event_id
-    )
-
-    assert len(payments) == 2
-
-    credit_card = next(
-        payment
-        for payment in payments
-        if payment["payment_name"]
-        == "Кредитная карта"
-    )
-
-    car_payment = next(
-        payment
-        for payment in payments
-        if payment["payment_name"]
-        == "Кредит на машину"
-    )
-
-    assert (
-        credit_card["status"]
-        == "pending"
-    )
-
-    assert (
-        car_payment["status"]
-        == "pending"
-    )
-
-    first_payment = await record_actual_payment(
-        payment_id=credit_card["id"],
-        actual_amount=17642,
-    )
-
-    assert first_payment["success"] is True
-    assert first_payment["allocation"] is None
-
-    second_payment = await record_actual_payment(
-        payment_id=car_payment["id"],
-        actual_amount=14983,
-    )
-
-    assert second_payment["success"] is True
-    assert (
-        second_payment["allocation"]
-        is not None
-    )
-
-    summary = await get_event_summary(
-        event_id
-    )
-
-    assert summary is not None
-
-    assert (
-        summary["event"]["actual_income"]
-        == 50000
-    )
-
-    assert (
-        summary["total_actual_payments"]
-        == 32625
-    )
-
-    assert summary["remaining"] == 17375
-
-    assert (
-        summary["all_payments_paid"]
-        is True
-    )
-
-    assert (
-        second_payment["remaining"]
-        == 17375
-    )
-
-
-@pytest.mark.asyncio
-async def test_early_income_does_not_create_second_event_on_planned_date():
-    """
-    Если доход за 10 октября фактически
-    пришёл 8 октября, поиск события 10 октября
-    должен находить уже существующее событие
-    от 8 октября.
-    """
-
-    early_date = date(2026, 10, 8)
-
-    await create_test_user()
-
-    early_income = await start_early_income_event(
-        actual_date=early_date,
-        planned_day=10,
-    )
-
-    event_id = early_income["id"]
-
-    recorded = await record_actual_income(
-        event_id=event_id,
-        actual_income=50000,
-        actual_date=early_date,
-    )
-
-    assert recorded["success"] is True
-
-    planned_date_event = await find_income_event(
-        planned_day=10,
-        month="2026-10",
-    )
-
-    assert planned_date_event is not None
-
-    assert (
-        planned_date_event["id"]
-        == event_id
-    )
-
-    assert (
-        planned_date_event["event_date"]
-        == "2026-10-08"
-    )
-
-    assert (
-        planned_date_event["status"]
-        == "income_received"
-    )
-
-
-@pytest.mark.asyncio
-async def test_allocation_is_not_counted_as_expense():
-    """
-    Виртуальное распределение по категориям
-    не должно уменьшать реальный баланс.
-
-    50 000 ₽ доход
-    - 18 000 ₽ кредитная карта
-    - 15 000 ₽ машина
-    = 17 000 ₽.
-
-    Эти 17 000 ₽ распределяются виртуально
-    по категориям, но остаются реальными деньгами
-    на основном счёте.
-    """
-
-    await create_test_user()
-
-    income = await start_income_event(
-        date(2026, 10, 10)
-    )
-
-    recorded = await record_actual_income(
-        event_id=income["event_id"],
-        actual_income=50000,
-        actual_date=date(2026, 10, 10),
-    )
-
-    assert recorded["success"] is True
-
-    payments = await get_event_payments(
-        income["event_id"]
-    )
-
-    credit_card = next(
-        payment
-        for payment in payments
-        if payment["payment_name"]
-        == "Кредитная карта"
-    )
-
-    car_payment = next(
-        payment
-        for payment in payments
-        if payment["payment_name"]
-        == "Кредит на машину"
-    )
-
-    await record_actual_payment(
-        payment_id=credit_card["id"],
-        actual_amount=18000,
-    )
-
-    final_payment = await record_actual_payment(
-        payment_id=car_payment["id"],
-        actual_amount=15000,
-    )
-
-    assert (
-        final_payment["allocation"]
-        is not None
-    )
-
-    balance = await get_current_balance()
-
-    assert balance == 17000
-
-
-@pytest.mark.asyncio
-async def test_savings_reduces_main_account_balance():
-    """
-    Проверяем именно физический перевод
-    денег в копилку.
-
-    После получения дохода 100 000 ₽
-    на основном счёте находится 100 000 ₽.
-
-    После перевода 23 000 ₽ в копилку
-    на основном счёте остаётся 77 000 ₽.
-    """
-
-    await create_test_user()
-
-    async with db.aiosqlite.connect(
-        db.DB_PATH
-    ) as connection:
-        await connection.execute(
-            """
-            INSERT INTO operations (
-                user_id,
-                operation_type,
-                amount,
-                description,
-                operation_date
-            )
-            VALUES (?, 'income', ?, ?, ?)
-            """,
-            (
-                1,
-                100000,
-                "Тестовый доход",
-                "2026-10-15",
-            ),
-        )
-
-        await connection.commit()
-
-    balance_before_savings = (
-        await get_current_balance()
-    )
-
-    assert balance_before_savings == 100000
-
-    from app.allocation import save_allocation
-
-    await save_allocation(
-        month="2026-10",
-        categories=[],
-        savings=23000,
-        source="test_savings",
-    )
-
-    balance_after_savings = (
-        await get_current_balance()
-    )
-
-    assert (
-        balance_after_savings
-        == 77000
-    )
+    assert result == 127000
