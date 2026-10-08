@@ -6,9 +6,9 @@ class Default(WorkerEntrypoint):
         try:
             result = await self.env.DB.prepare(
                 "SELECT value FROM bot_settings WHERE key = 'currency'"
-            ).first()
+            ).first("value")
 
-            currency = result["value"] if result else "RUB"
+            currency = result if result else "RUB"
 
             return Response(
                 f"Family Budget bot is starting! Currency: {currency}"
