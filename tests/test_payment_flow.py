@@ -3,6 +3,7 @@ from datetime import date
 import pytest
 
 from app.db import init_db
+from app.setup import setup
 from app.payment_flow import (
     get_current_balance,
     start_income_event,
@@ -12,7 +13,7 @@ from app.payment_flow import (
 @pytest.mark.asyncio
 async def test_start_income_event():
     await init_db()
-
+await setup()
     result = await start_income_event(
         date(2026, 10, 10)
     )
@@ -36,7 +37,7 @@ async def test_start_income_event():
 @pytest.mark.asyncio
 async def test_last_day_of_month_uses_day_30():
     await init_db()
-
+await setup()
     result = await start_income_event(
         date(2026, 10, 31)
     )
@@ -49,7 +50,7 @@ async def test_last_day_of_month_uses_day_30():
 @pytest.mark.asyncio
 async def test_current_balance():
     await init_db()
-
+await setup()
     balance = await get_current_balance()
 
     assert balance >= 0
