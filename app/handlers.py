@@ -7,9 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
-import aiosqlite
-
-from app.db import DB_PATH
+from app.db import execute
 from app.budget import (
     add_income,
     check_expense,
@@ -55,34 +53,15 @@ async def ensure_user(
     telegram_id: int,
     name: str,
 ):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            """
-            INSERT OR IGNORE INTO users (
-                telegram_id,
-                name
-            )
-            VALUES (?, ?)
-            """,
-            (
-                telegram_id,
-                name,
-            ),
+    await execute(
+        """
+        INSERT OR IGNORE INTO users (
+            telegram_id
         )
-
-        await db.execute(
-            """
-            UPDATE users
-            SET name = ?
-            WHERE telegram_id = ?
-            """,
-            (
-                name,
-                telegram_id,
-            ),
-        )
-
-        await db.commit()
+        VALUES (?)
+        """,
+        telegram_id,
+    )
 
 
 def format_money(amount: float) -> str:
@@ -99,9 +78,7 @@ def get_current_month() -> str:
 # START
 # =========================================================
 
-@router.message(
-    CommandStart()
-)
+@router.message(CommandStart())
 async def start_command(
     message: Message,
     state: FSMContext,
