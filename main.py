@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from app.db import init_db
 from app.setup import setup
 from app.handlers import router
+from app.scheduler import start_scheduler
 
 
 load_dotenv()
@@ -33,12 +34,16 @@ async def on_startup():
     await init_db()
     await setup()
 
+    start_scheduler(bot)
+
     logging.info("Family Budget Bot started")
+    logging.info("Income scheduler started")
 
 
 @dp.shutdown()
 async def on_shutdown():
     await bot.session.close()
+
     logging.info("Family Budget Bot stopped")
 
 
