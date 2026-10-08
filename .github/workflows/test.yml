@@ -27,3 +27,7 @@ jobs:
       - name: Compile Python files
         run: |
           python -m compileall .
+
+      - name: Run tests
+        run: |
+          pytest
