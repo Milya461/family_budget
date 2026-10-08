@@ -3,20 +3,17 @@ from datetime import date
 import pytest
 
 from app import payment_flow
+from app import payments
 
 
 @pytest.mark.asyncio
 async def test_start_income_event(monkeypatch):
     async def fake_get_income_plan(day):
         assert day == 10
-
-        return [
-            ("Зарплата мужа", 50000),
-        ]
+        return [("Зарплата мужа", 50000)]
 
     async def fake_get_planned_payments(day):
         assert day == 10
-
         return [
             ("Кредитная карта", 18000),
             ("Кредит на машину", 15000),
@@ -31,7 +28,6 @@ async def test_start_income_event(monkeypatch):
     ):
         assert event_date == "2026-10-10"
         assert planned_income == 50000
-
         return 1
 
     async def fake_execute(query, *params):
@@ -50,31 +46,26 @@ async def test_start_income_event(monkeypatch):
         "get_income_plan",
         fake_get_income_plan,
     )
-
     monkeypatch.setattr(
         payment_flow,
         "get_planned_payments",
         fake_get_planned_payments,
     )
-
     monkeypatch.setattr(
         payment_flow,
         "fetch_one",
         fake_fetch_one,
     )
-
     monkeypatch.setattr(
         payment_flow,
         "create_salary_event",
         fake_create_salary_event,
     )
-
     monkeypatch.setattr(
         payment_flow,
         "execute",
         fake_execute,
     )
-
     monkeypatch.setattr(
         payment_flow,
         "create_mandatory_payment",
@@ -115,10 +106,7 @@ async def test_start_income_event_last_day_uses_day_30(
 ):
     async def fake_get_income_plan(day):
         assert day == 30
-
-        return [
-            ("Аванс пользователя", 27500),
-        ]
+        return [("Аванс пользователя", 27500)]
 
     async def fake_get_planned_payments(day):
         return []
@@ -149,31 +137,26 @@ async def test_start_income_event_last_day_uses_day_30(
         "get_income_plan",
         fake_get_income_plan,
     )
-
     monkeypatch.setattr(
         payment_flow,
         "get_planned_payments",
         fake_get_planned_payments,
     )
-
     monkeypatch.setattr(
         payment_flow,
         "fetch_one",
         fake_fetch_one,
     )
-
     monkeypatch.setattr(
         payment_flow,
         "create_salary_event",
         fake_create_salary_event,
     )
-
     monkeypatch.setattr(
         payment_flow,
         "execute",
         fake_execute,
     )
-
     monkeypatch.setattr(
         payment_flow,
         "create_mandatory_payment",
@@ -283,7 +266,6 @@ async def test_record_actual_payment_rejects_negative_amount():
 async def test_get_payment_event_id(monkeypatch):
     async def fake_fetch_value(query, *params):
         assert params == (17,)
-
         return 8
 
     monkeypatch.setattr(
@@ -338,7 +320,6 @@ async def test_get_event_summary(monkeypatch):
         "get_event",
         fake_get_event,
     )
-
     monkeypatch.setattr(
         payment_flow,
         "get_event_payments",
@@ -382,7 +363,6 @@ async def test_start_early_income_event(
     ):
         assert planned_day == 10
         assert month == "2026-10"
-
         return None
 
     async def fake_start_income_event(
@@ -391,10 +371,7 @@ async def test_start_early_income_event(
     ):
         assert event_date == date(2026, 10, 8)
         assert planned_day == 10
-
-        return {
-            "event_id": 20,
-        }
+        return {"event_id": 20}
 
     async def fake_get_event(event_id):
         assert event_id == 20
@@ -413,13 +390,11 @@ async def test_start_early_income_event(
         "find_income_event",
         fake_find_income_event,
     )
-
     monkeypatch.setattr(
         payment_flow,
         "start_income_event",
         fake_start_income_event,
     )
-
     monkeypatch.setattr(
         payment_flow,
         "get_event",
@@ -437,9 +412,21 @@ async def test_start_early_income_event(
 
 
 def test_get_event_day_for_regular_date():
-    result = payment_flow.get_moscow_today()
+    result = payments.get_event_day(
+        date(2026, 10, 8)
+    )
 
-    assert result is not None
+    assert result == 8
+
+
+def test_get_event_day_for_last_day():
+    assert payments.get_event_day(
+        date(2026, 10, 31)
+    ) == 30
+
+    assert payments.get_event_day(
+        date(2026, 2, 28)
+    ) == 30
 
 
 @pytest.mark.asyncio
