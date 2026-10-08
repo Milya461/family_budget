@@ -5,6 +5,10 @@ import os
 from aiogram import Bot, Dispatcher
 from dotenv import load_dotenv
 
+from app.db import init_db
+from app.setup import setup
+
+
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -12,10 +16,12 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN is not set")
 
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s",
 )
+
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -23,6 +29,9 @@ dp = Dispatcher()
 
 @dp.startup()
 async def on_startup():
+    await init_db()
+    await setup()
+
     logging.info("Family Budget Bot started")
 
 
