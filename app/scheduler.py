@@ -1,3 +1,4 @@
+import calendar
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -209,19 +210,14 @@ async def daily_income_check(bot):
             bot=bot,
             planned_day=today.day,
         )
+        return
 
-    last_day = (
-        __import__("calendar")
-        .monthrange(
-            today.year,
-            today.month,
-        )[1]
-    )
+    last_day = calendar.monthrange(
+        today.year,
+        today.month,
+    )[1]
 
-    if (
-        today.day == last_day
-        and today.day == 31
-    ):
+    if today.day == last_day:
         await send_income_prompt(
             bot=bot,
             planned_day=30,
