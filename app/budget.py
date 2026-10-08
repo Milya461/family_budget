@@ -59,11 +59,10 @@ async def get_category_spent(db, category_id, month):
     return row[0] or 0
 
 
-async def add_expense(
+async def check_expense(
     telegram_id: int,
     amount: float,
     category_name: str,
-    description: str,
 ):
     current_month = date.today().strftime("%Y-%m")
 
@@ -85,8 +84,6 @@ async def add_expense(
                 "success": False,
                 "error": "Пользователь не найден. Отправьте /start.",
             }
-
-        user_id = user[0]
 
         category_id = await get_category_id(
             db,
@@ -113,6 +110,54 @@ async def add_expense(
         remaining_before = limit - spent
         remaining_after = remaining_before - amount
 
+        return {
+            "success": True,
+            "category": category_name,
+            "category_id": category_id,
+            "amount": amount,
+            "limit": limit,
+            "spent": spent,
+            "remaining": remaining_after,
+            "exceeded": remaining_after < 0,
+        }
+
+
+async def save_expense(
+    telegram_id: int,
+    amount: float,
+    category_name: str,
+    description: str,
+):
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        cursor = await db.execute(
+            """
+            SELECT id
+            FROM users
+            WHERE telegram_id = ?
+            """,
+            (telegram_id,),
+        )
+
+        user = await cursor.fetchone()
+
+        if not user:
+            return {
+                "success": False,
+                "error": "Пользователь не найден. Отправьте /start.",
+            }
+
+        category_id = await get_category_id(
+            db,
+            category_name,
+        )
+
+        if not category_id:
+            return {
+                "success": False,
+                "error": "Категория не найдена.",
+            }
+
         await db.execute(
             """
             INSERT INTO operations (
@@ -126,7 +171,7 @@ async def add_expense(
             VALUES (?, 'expense', ?, ?, ?, ?)
             """,
             (
-                user_id,
+                user[0],
                 amount,
                 category_id,
                 description,
@@ -136,15 +181,13 @@ async def add_expense(
 
         await db.commit()
 
-        return {
-            "success": True,
-            "category": category_name,
-            "amount": amount,
-            "limit": limit,
-            "spent": spent + amount,
-            "remaining": remaining_after,
-            "exceeded": remaining_after < 0,
-        }
+        check = await check_expense(
+            telegram_id,
+            amount,
+            category_name,
+        )
+
+        return check
 
 
 async def add_income(
