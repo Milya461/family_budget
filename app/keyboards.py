@@ -6,6 +6,19 @@ from aiogram.types import (
 )
 
 
+CATEGORIES = [
+    "Продукты",
+    "Бензин",
+    "Питомцы",
+    "Дом и быт",
+    "Развлечения и кафе",
+    "Личные покупки",
+    "Здоровье",
+    "Подарки и праздники",
+    "Непредвиденные",
+]
+
+
 def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -31,6 +44,46 @@ def main_menu() -> ReplyKeyboardMarkup:
     )
 
 
+def cancel_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="❌ Отмена",
+                    callback_data="cancel_action",
+                )
+            ]
+        ]
+    )
+
+
+def categories_keyboard() -> InlineKeyboardMarkup:
+    buttons = []
+
+    for category in CATEGORIES:
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=category,
+                    callback_data=f"expense_category:{category}",
+                )
+            ]
+        )
+
+    buttons.append(
+        [
+            InlineKeyboardButton(
+                text="❌ Отмена",
+                callback_data="cancel_action",
+            )
+        ]
+    )
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=buttons,
+    )
+
+
 def confirm_expense_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -41,7 +94,7 @@ def confirm_expense_keyboard() -> InlineKeyboardMarkup:
                 ),
                 InlineKeyboardButton(
                     text="❌ Нет",
-                    callback_data="cancel_expense",
+                    callback_data="cancel_action",
                 ),
             ]
         ]
