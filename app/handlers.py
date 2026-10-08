@@ -2,8 +2,10 @@ from aiogram import Router
 from aiogram.filters import CommandStart
 from aiogram.types import Message
 
-from app.db import DB_PATH
 import aiosqlite
+
+from app.db import DB_PATH
+from app.keyboards import main_menu
 
 
 router = Router()
@@ -28,8 +30,15 @@ async def start_handler(message: Message):
 
     await message.answer(
         f"Привет, {name}! 👋\n\n"
-        "Это семейный бюджет.\n\n"
-        "Я буду помогать вам учитывать доходы, "
-        "расходы, кредиты, накопления и бюджет семьи.\n\n"
-        "Сейчас мы только начинаем настройку."
+        "Это ваш семейный бюджет.\n\n"
+        "Здесь мы будем учитывать:\n"
+        "• доходы\n"
+        "• расходы\n"
+        "• кредитную карту\n"
+        "• кредит на машину\n"
+        "• ипотеку\n"
+        "• коммунальные платежи\n"
+        "• накопления\n\n"
+        "Выбирай действие ниже или просто пиши расход/доход обычным текстом.",
+        reply_markup=main_menu(),
     )
