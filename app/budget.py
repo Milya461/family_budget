@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import aiosqlite
@@ -273,7 +273,10 @@ async def get_monthly_report(
     В отчёте отдельно учитываются:
 
     - все доходы;
-    - фактически оплаченные обязательные платежи;
+    - кредиты;
+    - ипотека;
+    - коммунальные услуги;
+    - все обязательные платежи;
     - расходы на жизнь;
     - прочие реальные расходы;
     - виртуальное распределение бюджета;
@@ -357,45 +360,49 @@ async def get_monthly_report(
 
         all_operations = await cursor.fetchone()
 
-        # Все фактически оплаченные обязательные платежи:
-        # кредиты / машина / ипотека определяются
-        # по debt_id, коммуналка — по описанию операции.
+        # Кредиты:
+        # кредитная карта + кредит на машину.
         cursor = await db.execute(
             """
             SELECT
-                COALESCE(SUM(amount), 0)
-            FROM operations
-            WHERE operation_type = 'expense'
-              AND (
-                    debt_id IS NOT NULL
-                    OR description = 'Коммунальные услуги'
+                COALESCE(SUM(o.amount), 0)
+            FROM operations o
+            JOIN debts d
+              ON d.id = o.debt_id
+            WHERE o.operation_type = 'expense'
+              AND d.name IN (
+                    'Кредитная карта',
+                    'Кредит на машину'
               )
-              AND substr(operation_date, 1, 7) = ?
+              AND substr(o.operation_date, 1, 7) = ?
             """,
             (month,),
         )
 
-        mandatory_expenses_row = (
+        credit_expenses_row = (
             await cursor.fetchone()
         )
 
-        # Отдельная разбивка обязательных платежей.
+        # Ипотека.
         cursor = await db.execute(
             """
             SELECT
-                COALESCE(SUM(amount), 0)
-            FROM operations
-            WHERE operation_type = 'expense'
-              AND debt_id IS NOT NULL
-              AND substr(operation_date, 1, 7) = ?
+                COALESCE(SUM(o.amount), 0)
+            FROM operations o
+            JOIN debts d
+              ON d.id = o.debt_id
+            WHERE o.operation_type = 'expense'
+              AND d.name = 'Ипотека'
+              AND substr(o.operation_date, 1, 7) = ?
             """,
             (month,),
         )
 
-        debt_expenses_row = (
+        mortgage_expenses_row = (
             await cursor.fetchone()
         )
 
+        # Коммунальные услуги.
         cursor = await db.execute(
             """
             SELECT
@@ -409,6 +416,28 @@ async def get_monthly_report(
         )
 
         utilities_expenses_row = (
+            await cursor.fetchone()
+        )
+
+        # Все обязательные платежи.
+        cursor = await db.execute(
+            """
+            SELECT
+                COALESCE(SUM(o.amount), 0)
+            FROM operations o
+            LEFT JOIN debts d
+              ON d.id = o.debt_id
+            WHERE o.operation_type = 'expense'
+              AND (
+                    d.id IS NOT NULL
+                    OR o.description = 'Коммунальные услуги'
+              )
+              AND substr(o.operation_date, 1, 7) = ?
+            """,
+            (month,),
+        )
+
+        mandatory_expenses_row = (
             await cursor.fetchone()
         )
 
@@ -435,16 +464,18 @@ async def get_monthly_report(
         cursor = await db.execute(
             """
             SELECT
-                COALESCE(SUM(amount), 0)
-            FROM operations
-            WHERE operation_type = 'expense'
-              AND category_id IS NULL
-              AND debt_id IS NULL
+                COALESCE(SUM(o.amount), 0)
+            FROM operations o
+            LEFT JOIN debts d
+              ON d.id = o.debt_id
+            WHERE o.operation_type = 'expense'
+              AND o.category_id IS NULL
+              AND d.id IS NULL
               AND (
-                    description IS NULL
-                    OR description != 'Коммунальные услуги'
+                    o.description IS NULL
+                    OR o.description != 'Коммунальные услуги'
               )
-              AND substr(operation_date, 1, 7) = ?
+              AND substr(o.operation_date, 1, 7) = ?
             """,
             (month,),
         )
@@ -617,21 +648,27 @@ async def get_monthly_report(
         else 0
     )
 
-    mandatory_expenses = (
-        mandatory_expenses_row[0]
-        if mandatory_expenses_row
+    credit_expenses = (
+        credit_expenses_row[0]
+        if credit_expenses_row
         else 0
     )
 
-    debt_expenses = (
-        debt_expenses_row[0]
-        if debt_expenses_row
+    mortgage_expenses = (
+        mortgage_expenses_row[0]
+        if mortgage_expenses_row
         else 0
     )
 
     utilities_expenses = (
         utilities_expenses_row[0]
         if utilities_expenses_row
+        else 0
+    )
+
+    mandatory_expenses = (
+        mandatory_expenses_row[0]
+        if mandatory_expenses_row
         else 0
     )
 
@@ -723,9 +760,14 @@ async def get_monthly_report(
         "month_expenses": month_expenses,
         "total_income": total_income,
         "total_expenses": total_expenses,
-        "mandatory_expenses": mandatory_expenses,
-        "debt_expenses": debt_expenses,
+        "credit_expenses": credit_expenses,
+        "mortgage_expenses": mortgage_expenses,
         "utilities_expenses": utilities_expenses,
+        "mandatory_expenses": mandatory_expenses,
+        "debt_expenses": (
+            credit_expenses
+            + mortgage_expenses
+        ),
         "life_expenses": life_expenses,
         "other_expenses": other_expenses,
         "category_allocations": category_allocations,
