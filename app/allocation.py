@@ -1,5 +1,4 @@
-from datetime import date, datetime
-from zoneinfo import ZoneInfo
+from datetime import date, datetime, timedelta, timezone
 
 from app.db import (
     execute_many,
@@ -8,7 +7,7 @@ from app.db import (
 )
 
 
-MOSCOW_TIMEZONE = ZoneInfo("Europe/Moscow")
+MOSCOW_TIMEZONE = timezone(timedelta(hours=3))
 
 
 def get_moscow_today():
