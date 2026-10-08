@@ -30,6 +30,8 @@ async def clean_database(tmp_path, monkeypatch):
     import app.payment_flow
     import app.payments
     import app.setup
+    import app.budget
+    import app.allocation
 
     monkeypatch.setattr(
         app.payment_flow,
@@ -45,6 +47,18 @@ async def clean_database(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         app.setup,
+        "DB_PATH",
+        test_db,
+    )
+
+    monkeypatch.setattr(
+        app.budget,
+        "DB_PATH",
+        test_db,
+    )
+
+    monkeypatch.setattr(
+        app.allocation.db,
         "DB_PATH",
         test_db,
     )
@@ -230,8 +244,6 @@ async def test_full_monthly_budget_flow():
 
     assert budget["life_budget"] == 60000
 
-    # Все 60 000 ₽ должны быть распределены
-    # по виртуальным категориям.
     assert report["category_allocations"] == 60000
 
     assert budget["allocated"] == 60000
@@ -264,17 +276,6 @@ async def test_full_monthly_budget_flow():
     # Реальный основной счёт.
     # -------------------------------------------------
 
-    # Доходы:
-    # 150 000
-    #
-    # Минус реальные расходы:
-    # 67 000
-    #
-    # Минус физически отложенные накопления:
-    # 23 000
-    #
-    # Остаток:
-    # 60 000.
     assert report["main_account"] == 60000
 
     balance = await get_current_balance()
@@ -282,7 +283,7 @@ async def test_full_monthly_budget_flow():
     assert balance == 60000
 
     # -------------------------------------------------
-    # Проверяем, что виртуальное распределение
+    # Виртуальное распределение
     # не считается расходом.
     # -------------------------------------------------
 
@@ -308,17 +309,12 @@ async def test_full_monthly_budget_flow():
 
     assert total_category_limits == 60000
 
-    # Ни одна категория не должна получить
-    # больше своего месячного лимита.
     for category in report["categories"]:
         assert (
             category["allocated"]
             <= category["limit"]
         )
 
-    # Так как фактических расходов на жизнь
-    # ещё не было, весь распределённый бюджет
-    # доступен для трат.
     for category in report["categories"]:
         assert category["spent"] == 0
 
