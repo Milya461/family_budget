@@ -99,3 +99,41 @@ def confirm_expense_keyboard() -> InlineKeyboardMarkup:
             ]
         ]
     )
+
+
+def mandatory_payments_keyboard(
+    payments: list[dict],
+) -> InlineKeyboardMarkup:
+    buttons = []
+
+    for payment in payments:
+        if payment["status"] == "paid":
+            continue
+
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=(
+                        f"💸 {payment['payment_name']} "
+                        f"— {payment['planned_amount']:,.0f} ₽"
+                        .replace(",", " ")
+                    ),
+                    callback_data=(
+                        f"mandatory_payment:{payment['id']}"
+                    ),
+                )
+            ]
+        )
+
+    buttons.append(
+        [
+            InlineKeyboardButton(
+                text="❌ Закрыть",
+                callback_data="cancel_action",
+            )
+        ]
+    )
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=buttons,
+    )
