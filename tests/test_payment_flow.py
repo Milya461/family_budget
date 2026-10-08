@@ -35,6 +35,7 @@ async def clean_database(tmp_path, monkeypatch):
     import app.payment_flow
     import app.payments
     import app.setup
+    import app.allocation
 
     monkeypatch.setattr(
         app.payment_flow,
@@ -617,27 +618,41 @@ async def test_allocation_is_not_counted_as_expense():
 @pytest.mark.asyncio
 async def test_savings_reduces_main_account_balance():
     """
-    Деньги, физически отправленные в копилку,
-    должны уменьшать основной счёт.
+    Проверяем именно физический перевод
+    денег в копилку.
 
-    100 000 ₽ доход
-    - 23 000 ₽ отправлено в копилку
-    = 77 000 ₽ на основном счёте.
+    После получения дохода 100 000 ₽
+    на основном счёте находится 100 000 ₽.
+
+    После перевода 23 000 ₽ в копилку
+    на основном счёте остаётся 77 000 ₽.
     """
 
     await create_test_user()
 
-    income = await start_income_event(
-        date(2026, 10, 15)
-    )
+    async with db.aiosqlite.connect(
+        db.DB_PATH
+    ) as connection:
+        await connection.execute(
+            """
+            INSERT INTO operations (
+                user_id,
+                operation_type,
+                amount,
+                description,
+                operation_date
+            )
+            VALUES (?, 'income', ?, ?, ?)
+            """,
+            (
+                1,
+                100000,
+                "Тестовый доход",
+                "2026-10-15",
+            ),
+        )
 
-    recorded = await record_actual_income(
-        event_id=income["event_id"],
-        actual_income=100000,
-        actual_date=date(2026, 10, 15),
-    )
-
-    assert recorded["success"] is True
+        await connection.commit()
 
     balance_before_savings = (
         await get_current_balance()
