@@ -562,14 +562,41 @@ async def balances_button(
     today = get_moscow_today()
     month = today.strftime("%Y-%m")
 
-    balance = await get_current_balance()
-
     async with aiosqlite.connect(DB_PATH) as db:
+        # Все реальные доходы и расходы.
         cursor = await db.execute(
             """
             SELECT
-                balance,
-                monthly_target
+                COALESCE(
+                    SUM(
+                        CASE
+                            WHEN operation_type = 'income'
+                            THEN amount
+                            ELSE 0
+                        END
+                    ),
+                    0
+                ),
+                COALESCE(
+                    SUM(
+                        CASE
+                            WHEN operation_type = 'expense'
+                            THEN amount
+                            ELSE 0
+                        END
+                    ),
+                    0
+                )
+            FROM operations
+            """
+        )
+
+        operations_row = await cursor.fetchone()
+
+        # Физические деньги, уже отправленные в копилку.
+        cursor = await db.execute(
+            """
+            SELECT balance
             FROM savings
             WHERE id = 1
             """
@@ -577,6 +604,49 @@ async def balances_button(
 
         savings_row = await cursor.fetchone()
 
+        # Сколько виртуально распределено по категориям
+        # в текущем месяце.
+        cursor = await db.execute(
+            """
+            SELECT
+                COALESCE(SUM(amount), 0)
+            FROM monthly_allocations
+            WHERE month = ?
+              AND category_id IS NOT NULL
+            """,
+            (month,),
+        )
+
+        category_allocations_row = await cursor.fetchone()
+
+        # Сколько реально потрачено на жизнь
+        # в текущем месяце.
+        cursor = await db.execute(
+            """
+            SELECT
+                COALESCE(SUM(amount), 0)
+            FROM operations
+            WHERE operation_type = 'expense'
+              AND category_id IS NOT NULL
+              AND substr(operation_date, 1, 7) = ?
+            """,
+            (month,),
+        )
+
+        monthly_expenses_row = await cursor.fetchone()
+
+        # Цель накоплений.
+        cursor = await db.execute(
+            """
+            SELECT monthly_target
+            FROM savings
+            WHERE id = 1
+            """,
+        )
+
+        target_row = await cursor.fetchone()
+
+        # Сколько уже отложено в этом месяце.
         cursor = await db.execute(
             """
             SELECT
@@ -592,18 +662,17 @@ async def balances_button(
 
         monthly_savings_row = await cursor.fetchone()
 
-        cursor = await db.execute(
-            """
-            SELECT
-                COALESCE(SUM(amount), 0)
-            FROM monthly_allocations
-            WHERE month = ?
-              AND category_id IS NOT NULL
-            """,
-            (month,),
-        )
+    total_income = (
+        operations_row[0]
+        if operations_row
+        else 0
+    )
 
-        category_allocations_row = await cursor.fetchone()
+    total_expenses = (
+        operations_row[1]
+        if operations_row
+        else 0
+    )
 
     savings_balance = (
         savings_row[0]
@@ -611,9 +680,21 @@ async def balances_button(
         else 0
     )
 
+    category_allocations = (
+        category_allocations_row[0]
+        if category_allocations_row
+        else 0
+    )
+
+    monthly_expenses = (
+        monthly_expenses_row[0]
+        if monthly_expenses_row
+        else 0
+    )
+
     savings_target = (
-        savings_row[1]
-        if savings_row
+        target_row[0]
+        if target_row
         else 23000
     )
 
@@ -623,10 +704,22 @@ async def balances_button(
         else 0
     )
 
-    category_allocations = (
-        category_allocations_row[0]
-        if category_allocations_row
-        else 0
+    monthly_life_budget = 60000
+
+    main_account = (
+        total_income
+        - total_expenses
+        - savings_balance
+    )
+
+    life_remaining = max(
+        monthly_life_budget - monthly_expenses,
+        0,
+    )
+
+    budget_remaining_to_allocate = max(
+        monthly_life_budget - category_allocations,
+        0,
     )
 
     savings_remaining = max(
@@ -637,14 +730,22 @@ async def balances_button(
     await message.answer(
         (
             "📊 Балансы\n\n"
-            f"💳 Основной счёт: {balance:,.0f} ₽\n\n"
-            f"🐷 Копилка: {savings_balance:,.0f} ₽\n"
-            f"🎯 Отложено в этом месяце: "
-            f"{monthly_savings:,.0f} ₽\n"
-            f"⏳ До цели месяца осталось: "
-            f"{savings_remaining:,.0f} ₽\n\n"
-            f"📦 Распределено по категориям: "
-            f"{category_allocations:,.0f} ₽"
+            f"💳 Основной счёт: "
+            f"{main_account:,.0f} ₽\n\n"
+            f"🐷 Копилка: "
+            f"{savings_balance:,.0f} ₽\n\n"
+            "📦 Бюджет на жизнь\n"
+            f"Лимит: {monthly_life_budget:,.0f} ₽\n"
+            f"Распределено: {category_allocations:,.0f} ₽\n"
+            f"Осталось распределить: "
+            f"{budget_remaining_to_allocate:,.0f} ₽\n"
+            f"Потрачено: {monthly_expenses:,.0f} ₽\n"
+            f"Осталось на жизнь: "
+            f"{life_remaining:,.0f} ₽\n\n"
+            "🎯 Накопления\n"
+            f"Цель месяца: {savings_target:,.0f} ₽\n"
+            f"Отложено: {monthly_savings:,.0f} ₽\n"
+            f"До цели осталось: {savings_remaining:,.0f} ₽"
         ).replace(",", " "),
         reply_markup=main_menu(),
     )
