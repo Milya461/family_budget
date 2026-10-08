@@ -26,6 +26,7 @@ from app.payment_flow import (
     get_current_balance,
     record_actual_income,
     record_actual_payment,
+    start_early_income_event,
     start_income_event,
 )
 from app.payments import (
@@ -78,6 +79,90 @@ def detect_payment(text: str):
         for keyword in keywords:
             if keyword in normalized:
                 return payment_name
+
+    return None
+
+
+async def find_early_income_plan(
+    text: str,
+    amount: float,
+):
+    """
+    Ищет будущий плановый доход,
+    который мог прийти раньше установленной даты.
+
+    Например:
+    8 октября + "зарплата 50000"
+    -> зарплата мужа, запланированная на 10 октября.
+
+    Сначала проверяется название дохода,
+    затем точное совпадение плановой суммы.
+    """
+
+    today = get_moscow_today()
+    normalized = text.lower()
+
+    if (
+        "зарплата" not in normalized
+        and "аванс" not in normalized
+    ):
+        return None
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """
+            SELECT
+                day_of_month,
+                name,
+                planned_amount
+            FROM income_plans
+            WHERE day_of_month > ?
+              AND is_active = 1
+            ORDER BY day_of_month
+            """,
+            (today.day,),
+        )
+
+        rows = await cursor.fetchall()
+
+    if not rows:
+        return None
+
+    candidates = []
+
+    for day, name, planned_amount in rows:
+        name_lower = name.lower()
+
+        if "зарплата" in normalized:
+            if "зарплата" not in name_lower:
+                continue
+
+        if "аванс" in normalized:
+            if "аванс" not in name_lower:
+                continue
+
+        candidates.append(
+            {
+                "planned_day": day,
+                "name": name,
+                "planned_amount": planned_amount,
+            }
+        )
+
+    if not candidates:
+        return None
+
+    exact_amount = [
+        candidate
+        for candidate in candidates
+        if candidate["planned_amount"] == amount
+    ]
+
+    if len(exact_amount) == 1:
+        return exact_amount[0]
+
+    if len(candidates) == 1:
+        return candidates[0]
 
     return None
 
@@ -643,6 +728,106 @@ async def operation_handler(
                 "💰 Доход записан!",
                 reply_markup=main_menu(),
             )
+
+        return
+
+    early_income_plan = await find_early_income_plan(
+        text=text,
+        amount=amount,
+    )
+
+    if early_income_plan:
+        today = get_moscow_today()
+
+        result = await start_early_income_event(
+            actual_date=today,
+            planned_day=early_income_plan[
+                "planned_day"
+            ],
+        )
+
+        event_id = result["id"]
+
+        recorded = await record_actual_income(
+            event_id=event_id,
+            actual_income=amount,
+            actual_date=today,
+        )
+
+        if not recorded["success"]:
+            await message.answer(
+                recorded["error"]
+            )
+            return
+
+        payments = await get_event_payments(
+            event_id
+        )
+
+        pending_payments = [
+            payment
+            for payment in payments
+            if payment["status"] != "paid"
+        ]
+
+        if pending_payments:
+            await message.answer(
+                (
+                    "💰 Ранний доход записан!\n\n"
+                    f"Доход: {early_income_plan['name']}\n"
+                    f"Фактически получили: {amount:,.0f} ₽\n"
+                    f"Плановая дата: "
+                    f"{early_income_plan['planned_day']} числа\n"
+                    f"Фактическая дата: "
+                    f"{today.strftime('%d.%m.%Y')}\n\n"
+                    "Теперь нужно записать обязательные платежи:"
+                ).replace(",", " ")
+                + "\n"
+                + "\n".join(
+                    [
+                        f"• {payment['payment_name']} — "
+                        "напиши фактическую сумму"
+                        for payment in pending_payments
+                    ]
+                ),
+                reply_markup=main_menu(),
+            )
+        else:
+            allocation = recorded.get(
+                "allocation"
+            )
+
+            if allocation:
+                await message.answer(
+                    (
+                        "💰 Ранний доход записан!\n\n"
+                        f"Доход: {early_income_plan['name']}\n"
+                        f"Фактически получили: {amount:,.0f} ₽\n"
+                        f"Плановая дата: "
+                        f"{early_income_plan['planned_day']} числа\n"
+                        f"Фактическая дата: "
+                        f"{today.strftime('%d.%m.%Y')}\n\n"
+                        "📊 Остаток распределён по бюджету.\n"
+                        "Повторно в плановую дату этот доход "
+                        "спрашиваться не будет."
+                    ).replace(",", " "),
+                    reply_markup=main_menu(),
+                )
+            else:
+                await message.answer(
+                    (
+                        "💰 Ранний доход записан!\n\n"
+                        f"Доход: {early_income_plan['name']}\n"
+                        f"Фактически получили: {amount:,.0f} ₽\n"
+                        f"Плановая дата: "
+                        f"{early_income_plan['planned_day']} числа\n"
+                        f"Фактическая дата: "
+                        f"{today.strftime('%d.%m.%Y')}\n\n"
+                        "Повторно в плановую дату этот доход "
+                        "спрашиваться не будет."
+                    ).replace(",", " "),
+                    reply_markup=main_menu(),
+                )
 
         return
 
