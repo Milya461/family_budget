@@ -74,7 +74,42 @@ def detect_payment(text: str):
     return None
 
 
-async def find_pending_payment(payment_name: str):
+async def get_pending_income_event(
+    telegram_id: int,
+):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """
+            SELECT salary_event_id
+            FROM pending_income
+            WHERE telegram_id = ?
+            """,
+            (telegram_id,),
+        )
+
+        row = await cursor.fetchone()
+
+    return row[0] if row else None
+
+
+async def remove_pending_income_event(
+    telegram_id: int,
+):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            DELETE FROM pending_income
+            WHERE telegram_id = ?
+            """,
+            (telegram_id,),
+        )
+
+        await db.commit()
+
+
+async def find_pending_payment(
+    payment_name: str,
+):
     today = date.today().isoformat()
 
     async with aiosqlite.connect(DB_PATH) as db:
@@ -117,7 +152,9 @@ async def find_pending_payment(payment_name: str):
     }
 
 
-async def create_today_payment_if_needed(payment_name: str):
+async def create_today_payment_if_needed(
+    payment_name: str,
+):
     today = date.today()
 
     planned_payments = await get_planned_payments(
@@ -218,6 +255,7 @@ async def get_or_create_today_income_event():
             SELECT
                 id,
                 event_date,
+                planned_day,
                 planned_income,
                 actual_income,
                 status
@@ -235,9 +273,10 @@ async def get_or_create_today_income_event():
         return {
             "id": row[0],
             "event_date": row[1],
-            "planned_income": row[2],
-            "actual_income": row[3],
-            "status": row[4],
+            "planned_day": row[2],
+            "planned_income": row[3],
+            "actual_income": row[4],
+            "status": row[5],
         }
 
     result = await start_income_event(today)
@@ -247,7 +286,9 @@ async def get_or_create_today_income_event():
     )
 
 
-async def send_income_question(message: Message):
+async def send_income_question(
+    message: Message,
+):
     event = await get_or_create_today_income_event()
 
     if not event:
@@ -259,6 +300,27 @@ async def send_income_question(message: Message):
     pending_income_events[
         message.from_user.id
     ] = event["id"]
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO pending_income (
+                telegram_id,
+                salary_event_id
+            )
+            VALUES (?, ?)
+            ON CONFLICT(telegram_id)
+            DO UPDATE SET
+                salary_event_id = excluded.salary_event_id,
+                created_at = CURRENT_TIMESTAMP
+            """,
+            (
+                message.from_user.id,
+                event["id"],
+            ),
+        )
+
+        await db.commit()
 
     income_plan = await get_income_plan(
         date.today().day
@@ -279,7 +341,9 @@ async def send_income_question(message: Message):
 
 
 @router.message(CommandStart())
-async def start_handler(message: Message):
+async def start_handler(
+    message: Message,
+):
     telegram_id = message.from_user.id
     name = message.from_user.first_name or "Пользователь"
 
@@ -318,7 +382,9 @@ async def start_handler(message: Message):
 @router.message(
     lambda message: message.text == "💸 Добавить расход"
 )
-async def add_expense_button(message: Message):
+async def add_expense_button(
+    message: Message,
+):
     await message.answer(
         "Напиши расход обычным текстом.\n\n"
         "Например:\n"
@@ -332,7 +398,9 @@ async def add_expense_button(message: Message):
 @router.message(
     lambda message: message.text == "💰 Добавить доход"
 )
-async def add_income_button(message: Message):
+async def add_income_button(
+    message: Message,
+):
     await message.answer(
         "Напиши доход обычным текстом.\n\n"
         "Например:\n"
@@ -345,7 +413,9 @@ async def add_income_button(message: Message):
 @router.message(
     lambda message: message.text == "🏦 Обязательные платежи"
 )
-async def mandatory_payments_button(message: Message):
+async def mandatory_payments_button(
+    message: Message,
+):
     payments_10 = await get_planned_payments(10)
     payments_25 = await get_planned_payments(25)
 
@@ -357,7 +427,10 @@ async def mandatory_payments_button(message: Message):
 
     for name, amount in payments_10:
         lines.append(
-            f"• {name} — {amount:,.0f} ₽".replace(",", " ")
+            f"• {name} — {amount:,.0f} ₽".replace(
+                ",",
+                " ",
+            )
         )
 
     lines.extend(
@@ -369,7 +442,10 @@ async def mandatory_payments_button(message: Message):
 
     for name, amount in payments_25:
         lines.append(
-            f"• {name} — {amount:,.0f} ₽".replace(",", " ")
+            f"• {name} — {amount:,.0f} ₽".replace(
+                ",",
+                " ",
+            )
         )
 
     lines.extend(
@@ -394,7 +470,9 @@ async def mandatory_payments_button(message: Message):
 @router.message(
     lambda message: message.text == "📊 Балансы"
 )
-async def balances_button(message: Message):
+async def balances_button(
+    message: Message,
+):
     balance = await get_current_balance()
 
     await message.answer(
@@ -409,7 +487,9 @@ async def balances_button(message: Message):
 @router.message(
     lambda message: message.text == "📅 Отчёт за месяц"
 )
-async def monthly_report_button(message: Message):
+async def monthly_report_button(
+    message: Message,
+):
     await message.answer(
         "📅 Отчёт за месяц\n\n"
         "Раздел отчётов пока находится в разработке."
@@ -419,7 +499,9 @@ async def monthly_report_button(message: Message):
 @router.message(
     lambda message: message.text == "🐷 Копилка"
 )
-async def savings_button(message: Message):
+async def savings_button(
+    message: Message,
+):
     await message.answer(
         "🐷 Копилка\n\n"
         "Цель накоплений: 23 000 ₽ в месяц.\n"
@@ -430,7 +512,9 @@ async def savings_button(message: Message):
 @router.message(
     lambda message: message.text == "⚙️ Настройки"
 )
-async def settings_button(message: Message):
+async def settings_button(
+    message: Message,
+):
     await message.answer(
         "⚙️ Настройки\n\n"
         "Раздел настроек пока находится в разработке."
@@ -443,7 +527,9 @@ async def settings_button(message: Message):
         == "↩️ Отменить последнюю операцию"
     )
 )
-async def undo_button(message: Message):
+async def undo_button(
+    message: Message,
+):
     await message.answer(
         "↩️ Отмена последней операции пока находится "
         "в разработке."
@@ -451,7 +537,9 @@ async def undo_button(message: Message):
 
 
 @router.message()
-async def operation_handler(message: Message):
+async def operation_handler(
+    message: Message,
+):
     text = message.text.strip()
 
     amount = extract_amount(text)
@@ -466,7 +554,7 @@ async def operation_handler(message: Message):
 
     telegram_id = message.from_user.id
 
-    pending_event_id = pending_income_events.get(
+    pending_event_id = await get_pending_income_event(
         telegram_id
     )
 
@@ -474,6 +562,7 @@ async def operation_handler(message: Message):
         result = await record_actual_income(
             event_id=pending_event_id,
             actual_income=amount,
+            actual_date=date.today(),
         )
 
         if not result["success"]:
@@ -481,6 +570,10 @@ async def operation_handler(message: Message):
                 result["error"]
             )
             return
+
+        await remove_pending_income_event(
+            telegram_id
+        )
 
         pending_income_events.pop(
             telegram_id,
@@ -697,7 +790,7 @@ async def operation_handler(message: Message):
     )
 )
 async def confirm_expense(
-    callback: CallbackQuery
+    callback: CallbackQuery,
 ):
     telegram_id = callback.from_user.id
 
@@ -746,7 +839,7 @@ async def confirm_expense(
     )
 )
 async def cancel_expense(
-    callback: CallbackQuery
+    callback: CallbackQuery,
 ):
     pending_expenses.pop(
         callback.from_user.id,
