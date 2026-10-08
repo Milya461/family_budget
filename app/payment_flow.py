@@ -204,6 +204,7 @@ async def record_actual_income(
     event_id: int,
     actual_income: float,
     actual_date: date | None = None,
+    telegram_id: int | None = None,
 ):
     if actual_income < 0:
         return {
@@ -229,6 +230,7 @@ async def record_actual_income(
         event_id=event_id,
         actual_income=actual_income,
         actual_date=actual_date,
+        telegram_id=telegram_id,
     )
 
     if not result["success"]:
@@ -275,6 +277,7 @@ async def record_actual_income(
 async def record_actual_payment(
     payment_id: int,
     actual_amount: float,
+    telegram_id: int | None = None,
 ):
     if actual_amount < 0:
         return {
@@ -288,6 +291,7 @@ async def record_actual_payment(
     saved = await save_actual_payment(
         payment_id=payment_id,
         actual_amount=actual_amount,
+        telegram_id=telegram_id,
     )
 
     if not saved:
