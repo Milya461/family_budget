@@ -1,4 +1,4 @@
-from workers import WorkerEntrypoint
+from workers import WorkerEntrypoint, Response
 
 
 class Default(WorkerEntrypoint):
