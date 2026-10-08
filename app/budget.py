@@ -1,8 +1,18 @@
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 import aiosqlite
 
 from app.db import DB_PATH
+
+
+MOSCOW_TIMEZONE = ZoneInfo("Europe/Moscow")
+
+
+def get_moscow_today():
+    return datetime.now(
+        MOSCOW_TIMEZONE
+    ).date()
 
 
 async def get_category_id(db, category_name):
@@ -64,7 +74,9 @@ async def check_expense(
     amount: float,
     category_name: str,
 ):
-    current_month = date.today().strftime("%Y-%m")
+    current_month = get_moscow_today().strftime(
+        "%Y-%m"
+    )
 
     async with aiosqlite.connect(DB_PATH) as db:
 
@@ -82,7 +94,10 @@ async def check_expense(
         if not user:
             return {
                 "success": False,
-                "error": "Пользователь не найден. Отправьте /start.",
+                "error": (
+                    "Пользователь не найден. "
+                    "Отправьте /start."
+                ),
             }
 
         category_id = await get_category_id(
@@ -108,7 +123,9 @@ async def check_expense(
         )
 
         remaining_before = limit - spent
-        remaining_after = remaining_before - amount
+        remaining_after = (
+            remaining_before - amount
+        )
 
         return {
             "success": True,
@@ -144,7 +161,10 @@ async def save_expense(
         if not user:
             return {
                 "success": False,
-                "error": "Пользователь не найден. Отправьте /start.",
+                "error": (
+                    "Пользователь не найден. "
+                    "Отправьте /start."
+                ),
             }
 
         category_id = await get_category_id(
@@ -175,7 +195,7 @@ async def save_expense(
                 amount,
                 category_id,
                 description,
-                date.today().isoformat(),
+                get_moscow_today().isoformat(),
             ),
         )
 
@@ -211,7 +231,10 @@ async def add_income(
         if not user:
             return {
                 "success": False,
-                "error": "Пользователь не найден. Отправьте /start.",
+                "error": (
+                    "Пользователь не найден. "
+                    "Отправьте /start."
+                ),
             }
 
         await db.execute(
@@ -229,7 +252,7 @@ async def add_income(
                 user[0],
                 amount,
                 description,
-                date.today().isoformat(),
+                get_moscow_today().isoformat(),
             ),
         )
 
@@ -239,3 +262,397 @@ async def add_income(
             "success": True,
             "amount": amount,
         }
+
+
+async def get_monthly_report(
+    month: str | None = None,
+):
+    """
+    Формирует единый отчёт за месяц.
+
+    В отчёте отдельно учитываются:
+
+    - все доходы;
+    - обязательные платежи;
+    - расходы на жизнь;
+    - прочие реальные расходы;
+    - виртуальное распределение бюджета;
+    - физические накопления;
+    - остаток бюджета на жизнь;
+    - остаток до цели накоплений;
+    - реальные деньги на основном счёте.
+
+    Виртуальное распределение по категориям
+    не считается расходом.
+    """
+
+    if month is None:
+        month = get_moscow_today().strftime(
+            "%Y-%m"
+        )
+
+    async with aiosqlite.connect(DB_PATH) as db:
+
+        cursor = await db.execute(
+            """
+            SELECT
+                COALESCE(
+                    SUM(
+                        CASE
+                            WHEN operation_type = 'income'
+                            THEN amount
+                            ELSE 0
+                        END
+                    ),
+                    0
+                ),
+                COALESCE(
+                    SUM(
+                        CASE
+                            WHEN operation_type = 'expense'
+                            THEN amount
+                            ELSE 0
+                        END
+                    ),
+                    0
+                )
+            FROM operations
+            WHERE substr(operation_date, 1, 7) = ?
+            """,
+            (month,),
+        )
+
+        month_operations = await cursor.fetchone()
+
+        cursor = await db.execute(
+            """
+            SELECT
+                COALESCE(
+                    SUM(
+                        CASE
+                            WHEN operation_type = 'income'
+                            THEN amount
+                            ELSE 0
+                        END
+                    ),
+                    0
+                ),
+                COALESCE(
+                    SUM(
+                        CASE
+                            WHEN operation_type = 'expense'
+                            THEN amount
+                            ELSE 0
+                        END
+                    ),
+                    0
+                )
+            FROM operations
+            """,
+        )
+
+        all_operations = await cursor.fetchone()
+
+        cursor = await db.execute(
+            """
+            SELECT
+                COALESCE(SUM(amount), 0)
+            FROM operations
+            WHERE operation_type = 'expense'
+              AND debt_id IS NOT NULL
+              AND substr(operation_date, 1, 7) = ?
+            """,
+            (month,),
+        )
+
+        debt_expenses_row = await cursor.fetchone()
+
+        cursor = await db.execute(
+            """
+            SELECT
+                COALESCE(SUM(amount), 0)
+            FROM operations
+            WHERE operation_type = 'expense'
+              AND category_id IS NOT NULL
+              AND substr(operation_date, 1, 7) = ?
+            """,
+            (month,),
+        )
+
+        life_expenses_row = await cursor.fetchone()
+
+        cursor = await db.execute(
+            """
+            SELECT
+                COALESCE(SUM(amount), 0)
+            FROM operations
+            WHERE operation_type = 'expense'
+              AND category_id IS NULL
+              AND debt_id IS NULL
+              AND substr(operation_date, 1, 7) = ?
+            """,
+            (month,),
+        )
+
+        other_expenses_row = await cursor.fetchone()
+
+        cursor = await db.execute(
+            """
+            SELECT
+                COALESCE(SUM(amount), 0)
+            FROM monthly_allocations
+            WHERE month = ?
+              AND category_id IS NOT NULL
+            """,
+            (month,),
+        )
+
+        category_allocations_row = (
+            await cursor.fetchone()
+        )
+
+        cursor = await db.execute(
+            """
+            SELECT
+                COALESCE(SUM(amount), 0)
+            FROM monthly_allocations
+            WHERE month = ?
+              AND category_id IS NULL
+              AND debt_id IS NULL
+              AND source = 'savings'
+            """,
+            (month,),
+        )
+
+        monthly_savings_row = (
+            await cursor.fetchone()
+        )
+
+        cursor = await db.execute(
+            """
+            SELECT
+                balance,
+                monthly_target
+            FROM savings
+            WHERE id = 1
+            """
+        )
+
+        savings_row = await cursor.fetchone()
+
+        cursor = await db.execute(
+            """
+            SELECT
+                COALESCE(
+                    SUM(monthly_limit),
+                    0
+                )
+            FROM categories
+            WHERE is_active = 1
+            """
+        )
+
+        life_budget_row = await cursor.fetchone()
+
+        cursor = await db.execute(
+            """
+            SELECT
+                id,
+                name,
+                monthly_limit
+            FROM categories
+            WHERE is_active = 1
+            ORDER BY id
+            """
+        )
+
+        category_rows = await cursor.fetchall()
+
+        category_report = []
+
+        for category_id, name, limit in category_rows:
+            cursor = await db.execute(
+                """
+                SELECT
+                    COALESCE(SUM(amount), 0)
+                FROM operations
+                WHERE operation_type = 'expense'
+                  AND category_id = ?
+                  AND substr(operation_date, 1, 7) = ?
+                """,
+                (
+                    category_id,
+                    month,
+                ),
+            )
+
+            spent_row = await cursor.fetchone()
+
+            cursor = await db.execute(
+                """
+                SELECT
+                    COALESCE(SUM(amount), 0)
+                FROM monthly_allocations
+                WHERE month = ?
+                  AND category_id = ?
+                """,
+                (
+                    month,
+                    category_id,
+                ),
+            )
+
+            allocated_row = await cursor.fetchone()
+
+            spent = (
+                spent_row[0]
+                if spent_row
+                else 0
+            )
+
+            allocated = (
+                allocated_row[0]
+                if allocated_row
+                else 0
+            )
+
+            category_report.append(
+                {
+                    "id": category_id,
+                    "name": name,
+                    "limit": limit,
+                    "allocated": allocated,
+                    "spent": spent,
+                    "remaining": max(
+                        limit - spent,
+                        0,
+                    ),
+                    "remaining_to_allocate": max(
+                        limit - allocated,
+                        0,
+                    ),
+                }
+            )
+
+    month_income = (
+        month_operations[0]
+        if month_operations
+        else 0
+    )
+
+    month_expenses = (
+        month_operations[1]
+        if month_operations
+        else 0
+    )
+
+    total_income = (
+        all_operations[0]
+        if all_operations
+        else 0
+    )
+
+    total_expenses = (
+        all_operations[1]
+        if all_operations
+        else 0
+    )
+
+    debt_expenses = (
+        debt_expenses_row[0]
+        if debt_expenses_row
+        else 0
+    )
+
+    life_expenses = (
+        life_expenses_row[0]
+        if life_expenses_row
+        else 0
+    )
+
+    other_expenses = (
+        other_expenses_row[0]
+        if other_expenses_row
+        else 0
+    )
+
+    category_allocations = (
+        category_allocations_row[0]
+        if category_allocations_row
+        else 0
+    )
+
+    monthly_savings = (
+        monthly_savings_row[0]
+        if monthly_savings_row
+        else 0
+    )
+
+    savings_balance = (
+        savings_row[0]
+        if savings_row
+        else 0
+    )
+
+    savings_target = (
+        savings_row[1]
+        if savings_row
+        else 23000
+    )
+
+    life_budget = (
+        life_budget_row[0]
+        if life_budget_row
+        else 60000
+    )
+
+    life_remaining = max(
+        life_budget - life_expenses,
+        0,
+    )
+
+    life_remaining_to_allocate = max(
+        life_budget - category_allocations,
+        0,
+    )
+
+    savings_remaining = max(
+        savings_target - monthly_savings,
+        0,
+    )
+
+    main_account = (
+        total_income
+        - total_expenses
+        - savings_balance
+    )
+
+    free_after_targets = (
+        main_account
+        - life_remaining
+        - savings_remaining
+    )
+
+    return {
+        "month": month,
+        "month_income": month_income,
+        "month_expenses": month_expenses,
+        "total_income": total_income,
+        "total_expenses": total_expenses,
+        "debt_expenses": debt_expenses,
+        "life_expenses": life_expenses,
+        "other_expenses": other_expenses,
+        "category_allocations": category_allocations,
+        "life_budget": life_budget,
+        "life_remaining": life_remaining,
+        "life_remaining_to_allocate": (
+            life_remaining_to_allocate
+        ),
+        "monthly_savings": monthly_savings,
+        "savings_balance": savings_balance,
+        "savings_target": savings_target,
+        "savings_remaining": savings_remaining,
+        "main_account": main_account,
+        "free_after_targets": free_after_targets,
+        "categories": category_report,
+    }
