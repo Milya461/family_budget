@@ -1,3 +1,6 @@
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from aiogram import Router
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
@@ -18,9 +21,17 @@ from app.keyboards import (
     cancel_keyboard,
     confirm_expense_keyboard,
     main_menu,
+    mandatory_payments_keyboard,
 )
-from app.payment_flow import get_current_balance
+from app.payment_flow import (
+    get_current_balance,
+    record_actual_payment,
+)
 from app.allocation import get_monthly_budget_summary
+from app.payments import (
+    get_mandatory_payment,
+    get_month_mandatory_payments,
+)
 
 
 router = Router()
@@ -34,6 +45,10 @@ class ExpenseStates(StatesGroup):
     waiting_for_amount = State()
     waiting_for_description = State()
     waiting_for_confirmation = State()
+
+
+class MandatoryPaymentStates(StatesGroup):
+    waiting_for_amount = State()
 
 
 async def ensure_user(
@@ -74,11 +89,19 @@ def format_money(amount: float) -> str:
     return f"{amount:,.0f}".replace(",", " ")
 
 
+def get_current_month() -> str:
+    return datetime.now(
+        ZoneInfo("Europe/Moscow")
+    ).strftime("%Y-%m")
+
+
 # =========================================================
 # START
 # =========================================================
 
-@router.message(CommandStart())
+@router.message(
+    CommandStart()
+)
 async def start_command(
     message: Message,
     state: FSMContext,
@@ -466,6 +489,254 @@ async def confirm_expense(
     )
 
     await callback.message.answer(
+        f"💳 Основной счёт: "
+        f"{format_money(balance)} ₽",
+        reply_markup=main_menu(),
+    )
+
+
+# =========================================================
+# ОБЯЗАТЕЛЬНЫЕ ПЛАТЕЖИ
+# =========================================================
+
+@router.message(
+    lambda message:
+        message.text == "🏦 Обязательные платежи"
+)
+async def mandatory_payments_button(
+    message: Message,
+    state: FSMContext,
+):
+    await state.clear()
+
+    month = get_current_month()
+
+    payments = await get_month_mandatory_payments(
+        month
+    )
+
+    if not payments:
+        await message.answer(
+            "🏦 ОБЯЗАТЕЛЬНЫЕ ПЛАТЕЖИ\n\n"
+            "На текущий месяц платежи ещё не созданы.\n\n"
+            "Они появятся после создания событий "
+            "доходов по графику.",
+            reply_markup=main_menu(),
+        )
+        return
+
+    lines = [
+        "🏦 ОБЯЗАТЕЛЬНЫЕ ПЛАТЕЖИ",
+        "",
+    ]
+
+    current_event_date = None
+
+    for payment in payments:
+        event_date = payment["event_date"]
+
+        if event_date != current_event_date:
+            current_event_date = event_date
+
+            date_text = datetime.strptime(
+                event_date,
+                "%Y-%m-%d",
+            ).strftime("%d.%m")
+
+            lines.extend(
+                [
+                    f"📅 {date_text}",
+                    "",
+                ]
+            )
+
+        if payment["status"] == "paid":
+            status = (
+                f"✅ Оплачено: "
+                f"{format_money(payment['actual_amount'])} ₽"
+            )
+        else:
+            status = "⏳ Не оплачено"
+
+        lines.extend(
+            [
+                f"• {payment['payment_name']}",
+                f"  План: "
+                f"{format_money(payment['planned_amount'])} ₽",
+                f"  {status}",
+                "",
+            ]
+        )
+
+    lines.append(
+        "Нажми на платёж ниже, чтобы записать "
+        "фактическую сумму."
+    )
+
+    await message.answer(
+        "\n".join(lines),
+        reply_markup=mandatory_payments_keyboard(
+            payments
+        ),
+    )
+
+
+@router.callback_query(
+    lambda callback:
+        callback.data
+        and callback.data.startswith(
+            "mandatory_payment:"
+        )
+)
+async def select_mandatory_payment(
+    callback: CallbackQuery,
+    state: FSMContext,
+):
+    try:
+        payment_id = int(
+            callback.data.split(
+                ":",
+                1,
+            )[1]
+        )
+    except (ValueError, IndexError):
+        await callback.answer(
+            "Не удалось определить платёж.",
+            show_alert=True,
+        )
+        return
+
+    payment = await get_mandatory_payment(
+        payment_id
+    )
+
+    if not payment:
+        await callback.answer(
+            "Платёж не найден.",
+            show_alert=True,
+        )
+        return
+
+    if payment["status"] == "paid":
+        await callback.answer(
+            "Этот платёж уже записан.",
+            show_alert=True,
+        )
+        return
+
+    await state.clear()
+
+    await state.update_data(
+        mandatory_payment_id=payment_id,
+        mandatory_payment_name=payment["payment_name"],
+        mandatory_payment_planned=payment["planned_amount"],
+    )
+
+    await state.set_state(
+        MandatoryPaymentStates.waiting_for_amount
+    )
+
+    await callback.answer()
+
+    await callback.message.edit_text(
+        "🏦 ОБЯЗАТЕЛЬНЫЙ ПЛАТЁЖ\n\n"
+        f"Платёж: {payment['payment_name']}\n"
+        f"План: "
+        f"{format_money(payment['planned_amount'])} ₽\n\n"
+        "Введи фактическую сумму, которую "
+        "ты реально заплатила.\n\n"
+        "Например: 14870",
+        reply_markup=cancel_keyboard(),
+    )
+
+
+@router.message(
+    MandatoryPaymentStates.waiting_for_amount
+)
+async def mandatory_payment_amount(
+    message: Message,
+    state: FSMContext,
+):
+    text = (message.text or "").strip()
+
+    try:
+        amount = float(
+            text.replace(" ", "")
+            .replace(",", ".")
+        )
+    except ValueError:
+        await message.answer(
+            "❌ Не смогла распознать сумму.\n\n"
+            "Введи только число, например:\n"
+            "14870"
+        )
+        return
+
+    if amount <= 0:
+        await message.answer(
+            "❌ Сумма должна быть больше нуля.\n\n"
+            "Попробуй ещё раз."
+        )
+        return
+
+    data = await state.get_data()
+
+    payment_id = data.get(
+        "mandatory_payment_id"
+    )
+    payment_name = data.get(
+        "mandatory_payment_name"
+    )
+    planned_amount = data.get(
+        "mandatory_payment_planned"
+    )
+
+    if payment_id is None:
+        await state.clear()
+
+        await message.answer(
+            "❌ Сессия платежа закончилась.",
+            reply_markup=main_menu(),
+        )
+        return
+
+    result = await record_actual_payment(
+        payment_id=payment_id,
+        actual_amount=amount,
+    )
+
+    await state.clear()
+
+    if not result["success"]:
+        await message.answer(
+            f"❌ {result['error']}",
+            reply_markup=main_menu(),
+        )
+        return
+
+    difference = amount - planned_amount
+
+    if difference > 0:
+        difference_text = (
+            f"Переплата относительно плана: "
+            f"+{format_money(difference)} ₽"
+        )
+    elif difference < 0:
+        difference_text = (
+            f"Меньше плана на: "
+            f"{format_money(abs(difference))} ₽"
+        )
+    else:
+        difference_text = "Ровно по плану."
+
+    balance = await get_current_balance()
+
+    await message.answer(
+        "✅ Платёж записан.\n\n"
+        f"Платёж: {payment_name}\n"
+        f"План: {format_money(planned_amount)} ₽\n"
+        f"Фактически: {format_money(amount)} ₽\n"
+        f"{difference_text}\n\n"
         f"💳 Основной счёт: "
         f"{format_money(balance)} ₽",
         reply_markup=main_menu(),
