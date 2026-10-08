@@ -19,6 +19,7 @@ from app.parser import (
     detect_income,
     extract_amount,
 )
+from app.payments import get_planned_payments
 
 
 router = Router()
@@ -81,10 +82,33 @@ async def add_income_button(message: Message):
 
 @router.message(lambda message: message.text == "🏦 Обязательные платежи")
 async def mandatory_payments_button(message: Message):
-    await message.answer(
-        "🏦 Обязательные платежи\n\n"
-        "Здесь будут отображаться платежи на ближайшую дату."
+    payments_10 = await get_planned_payments(10)
+    payments_25 = await get_planned_payments(25)
+
+    lines = [
+        "🏦 Обязательные платежи",
+        "",
+        "📅 10 числа:",
+    ]
+
+    for name, amount in payments_10:
+        lines.append(
+            f"• {name} — {amount:,.0f} ₽".replace(",", " ")
+        )
+
+    lines.extend(
+        [
+            "",
+            "📅 25 числа:",
+        ]
     )
+
+    for name, amount in payments_25:
+        lines.append(
+            f"• {name} — {amount:,.0f} ₽".replace(",", " ")
+        )
+
+    await message.answer("\n".join(lines))
 
 
 @router.message(lambda message: message.text == "📊 Балансы")
