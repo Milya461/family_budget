@@ -19,7 +19,12 @@ from app.parser import (
     detect_income,
     extract_amount,
 )
-from app.payments import get_planned_payments
+from app.payment_flow import (
+    get_current_balance,
+)
+from app.payments import (
+    get_planned_payments,
+)
 
 
 router = Router()
@@ -108,13 +113,25 @@ async def mandatory_payments_button(message: Message):
             f"• {name} — {amount:,.0f} ₽".replace(",", " ")
         )
 
+    lines.extend(
+        [
+            "",
+            "Чтобы записать фактический платёж, "
+            "напиши его названием и суммой.",
+            "",
+            "Например:",
+            "• ипотека 8937",
+            "• кредитка 17642",
+            "• кредит на машину 14983",
+            "• коммунальные услуги 9780",
+        ]
+    )
+
     await message.answer("\n".join(lines))
 
 
 @router.message(lambda message: message.text == "📊 Балансы")
 async def balances_button(message: Message):
-    from app.payment_flow import get_current_balance
-
     balance = await get_current_balance()
 
     await message.answer(
