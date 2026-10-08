@@ -1,6 +1,5 @@
 import calendar
-from datetime import datetime
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, timezone
 
 from app.db import (
     execute,
@@ -14,7 +13,7 @@ from app.payment_flow import (
 )
 
 
-MOSCOW_TIMEZONE = ZoneInfo("Europe/Moscow")
+MOSCOW_TIMEZONE = timezone(timedelta(hours=3))
 
 
 def get_moscow_today():
