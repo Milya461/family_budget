@@ -1,10 +1,10 @@
 from datetime import date
 
+import aiosqlite
+
 from aiogram import Router
 from aiogram.filters import CommandStart
 from aiogram.types import CallbackQuery, Message
-
-import aiosqlite
 
 from app.budget import (
     add_income,
@@ -18,22 +18,27 @@ from app.keyboards import (
 )
 from app.parser import (
     detect_category,
-    detect_debt,
     detect_income,
     extract_amount,
 )
 from app.payment_flow import (
     get_current_balance,
+    record_actual_income,
+    record_actual_payment,
+    start_income_event,
 )
 from app.payments import (
+    get_event,
+    get_event_payments,
+    get_income_plan,
     get_planned_payments,
-    save_actual_payment,
 )
 
 
 router = Router()
 
 pending_expenses = {}
+pending_income_events = {}
 
 
 PAYMENT_KEYWORDS = {
@@ -91,7 +96,10 @@ async def find_pending_payment(payment_name: str):
             ORDER BY mp.id DESC
             LIMIT 1
             """,
-            (payment_name, today),
+            (
+                payment_name,
+                today,
+            ),
         )
 
         row = await cursor.fetchone()
@@ -112,7 +120,9 @@ async def find_pending_payment(payment_name: str):
 async def create_today_payment_if_needed(payment_name: str):
     today = date.today()
 
-    planned_payments = await get_planned_payments(today.day)
+    planned_payments = await get_planned_payments(
+        today.day
+    )
 
     planned_amount = None
 
@@ -139,15 +149,15 @@ async def create_today_payment_if_needed(payment_name: str):
         event = await cursor.fetchone()
 
     if not event:
-        from app.payment_flow import start_income_event
-
         result = await start_income_event(today)
 
         event_id = result["event_id"]
     else:
         event_id = event[0]
 
-    payment = await find_pending_payment(payment_name)
+    payment = await find_pending_payment(
+        payment_name
+    )
 
     if payment:
         return payment
@@ -199,6 +209,75 @@ async def create_today_payment_if_needed(payment_name: str):
     }
 
 
+async def get_or_create_today_income_event():
+    today = date.today()
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """
+            SELECT
+                id,
+                event_date,
+                planned_income,
+                actual_income,
+                status
+            FROM salary_events
+            WHERE event_date = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (today.isoformat(),),
+        )
+
+        row = await cursor.fetchone()
+
+    if row:
+        return {
+            "id": row[0],
+            "event_date": row[1],
+            "planned_income": row[2],
+            "actual_income": row[3],
+            "status": row[4],
+        }
+
+    result = await start_income_event(today)
+
+    return await get_event(
+        result["event_id"]
+    )
+
+
+async def send_income_question(message: Message):
+    event = await get_or_create_today_income_event()
+
+    if not event:
+        return
+
+    if event["status"] == "income_received":
+        return
+
+    pending_income_events[
+        message.from_user.id
+    ] = event["id"]
+
+    income_plan = await get_income_plan(
+        date.today().day
+    )
+
+    if not income_plan:
+        return
+
+    income_name = income_plan[0][0]
+
+    await message.answer(
+        (
+            f"💰 Сегодня ожидается: {income_name}\n\n"
+            f"План: {event['planned_income']:,.0f} ₽\n\n"
+            "Сколько фактически получили?"
+        ).replace(",", " ")
+    )
+
+
 @router.message(CommandStart())
 async def start_handler(message: Message):
     telegram_id = message.from_user.id
@@ -207,13 +286,20 @@ async def start_handler(message: Message):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             """
-            INSERT INTO users (telegram_id, name)
+            INSERT INTO users (
+                telegram_id,
+                name
+            )
             VALUES (?, ?)
             ON CONFLICT(telegram_id)
             DO UPDATE SET name = excluded.name
             """,
-            (telegram_id, name),
+            (
+                telegram_id,
+                name,
+            ),
         )
+
         await db.commit()
 
     await message.answer(
@@ -229,7 +315,9 @@ async def start_handler(message: Message):
     )
 
 
-@router.message(lambda message: message.text == "💸 Добавить расход")
+@router.message(
+    lambda message: message.text == "💸 Добавить расход"
+)
 async def add_expense_button(message: Message):
     await message.answer(
         "Напиши расход обычным текстом.\n\n"
@@ -241,7 +329,9 @@ async def add_expense_button(message: Message):
     )
 
 
-@router.message(lambda message: message.text == "💰 Добавить доход")
+@router.message(
+    lambda message: message.text == "💰 Добавить доход"
+)
 async def add_income_button(message: Message):
     await message.answer(
         "Напиши доход обычным текстом.\n\n"
@@ -252,7 +342,9 @@ async def add_income_button(message: Message):
     )
 
 
-@router.message(lambda message: message.text == "🏦 Обязательные платежи")
+@router.message(
+    lambda message: message.text == "🏦 Обязательные платежи"
+)
 async def mandatory_payments_button(message: Message):
     payments_10 = await get_planned_payments(10)
     payments_25 = await get_planned_payments(25)
@@ -294,20 +386,29 @@ async def mandatory_payments_button(message: Message):
         ]
     )
 
-    await message.answer("\n".join(lines))
+    await message.answer(
+        "\n".join(lines)
+    )
 
 
-@router.message(lambda message: message.text == "📊 Балансы")
+@router.message(
+    lambda message: message.text == "📊 Балансы"
+)
 async def balances_button(message: Message):
     balance = await get_current_balance()
 
     await message.answer(
         "📊 Балансы\n\n"
-        f"💳 Основной счёт: {balance:,.0f} ₽".replace(",", " ")
+        f"💳 Основной счёт: {balance:,.0f} ₽".replace(
+            ",",
+            " ",
+        )
     )
 
 
-@router.message(lambda message: message.text == "📅 Отчёт за месяц")
+@router.message(
+    lambda message: message.text == "📅 Отчёт за месяц"
+)
 async def monthly_report_button(message: Message):
     await message.answer(
         "📅 Отчёт за месяц\n\n"
@@ -315,7 +416,9 @@ async def monthly_report_button(message: Message):
     )
 
 
-@router.message(lambda message: message.text == "🐷 Копилка")
+@router.message(
+    lambda message: message.text == "🐷 Копилка"
+)
 async def savings_button(message: Message):
     await message.answer(
         "🐷 Копилка\n\n"
@@ -324,7 +427,9 @@ async def savings_button(message: Message):
     )
 
 
-@router.message(lambda message: message.text == "⚙️ Настройки")
+@router.message(
+    lambda message: message.text == "⚙️ Настройки"
+)
 async def settings_button(message: Message):
     await message.answer(
         "⚙️ Настройки\n\n"
@@ -333,11 +438,15 @@ async def settings_button(message: Message):
 
 
 @router.message(
-    lambda message: message.text == "↩️ Отменить последнюю операцию"
+    lambda message: (
+        message.text
+        == "↩️ Отменить последнюю операцию"
+    )
 )
 async def undo_button(message: Message):
     await message.answer(
-        "↩️ Отмена последней операции пока находится в разработке."
+        "↩️ Отмена последней операции пока находится "
+        "в разработке."
     )
 
 
@@ -355,6 +464,87 @@ async def operation_handler(message: Message):
         )
         return
 
+    telegram_id = message.from_user.id
+
+    pending_event_id = pending_income_events.get(
+        telegram_id
+    )
+
+    if pending_event_id:
+        result = await record_actual_income(
+            event_id=pending_event_id,
+            actual_income=amount,
+        )
+
+        if not result["success"]:
+            await message.answer(
+                result["error"]
+            )
+            return
+
+        pending_income_events.pop(
+            telegram_id,
+            None,
+        )
+
+        event = await get_event(
+            pending_event_id
+        )
+
+        payments = await get_event_payments(
+            pending_event_id
+        )
+
+        pending_payments = [
+            payment
+            for payment in payments
+            if payment["status"] != "paid"
+        ]
+
+        if pending_payments:
+            lines = [
+                "💰 Доход записан!",
+                "",
+                f"Фактически: {amount:,.0f} ₽",
+                f"План: {result['planned_income']:,.0f} ₽",
+                "",
+                "Теперь нужно записать обязательные платежи:",
+            ]
+
+            for payment in pending_payments:
+                lines.append(
+                    f"• {payment['payment_name']} — "
+                    f"напиши фактическую сумму"
+                )
+
+            await message.answer(
+                "\n".join(lines).replace(",", " "),
+                reply_markup=main_menu(),
+            )
+            return
+
+        allocation = result.get(
+            "allocation"
+        )
+
+        if allocation:
+            await message.answer(
+                (
+                    "💰 Доход записан!\n\n"
+                    f"Фактически: {amount:,.0f} ₽\n"
+                    f"План: {result['planned_income']:,.0f} ₽\n\n"
+                    "📊 Остаток распределён по бюджету."
+                ).replace(",", " "),
+                reply_markup=main_menu(),
+            )
+        else:
+            await message.answer(
+                "💰 Доход записан!",
+                reply_markup=main_menu(),
+            )
+
+        return
+
     payment_name = detect_payment(text)
 
     if payment_name:
@@ -369,14 +559,14 @@ async def operation_handler(message: Message):
             )
             return
 
-        result = await save_actual_payment(
+        result = await record_actual_payment(
             payment_id=payment["id"],
             actual_amount=amount,
         )
 
-        if not result:
+        if not result["success"]:
             await message.answer(
-                "Не удалось сохранить обязательный платёж."
+                result["error"]
             )
             return
 
@@ -409,17 +599,22 @@ async def operation_handler(message: Message):
 
     if detect_income(text):
         result = await add_income(
-            telegram_id=message.from_user.id,
+            telegram_id=telegram_id,
             amount=amount,
             description=text,
         )
 
         if not result["success"]:
-            await message.answer(result["error"])
+            await message.answer(
+                result["error"]
+            )
             return
 
         await message.answer(
-            f"💰 Доход записан: +{amount:,.0f} ₽".replace(",", " "),
+            f"💰 Доход записан: +{amount:,.0f} ₽".replace(
+                ",",
+                " ",
+            ),
             reply_markup=main_menu(),
         )
         return
@@ -438,17 +633,19 @@ async def operation_handler(message: Message):
         return
 
     result = await check_expense(
-        telegram_id=message.from_user.id,
+        telegram_id=telegram_id,
         amount=amount,
         category_name=category,
     )
 
     if not result["success"]:
-        await message.answer(result["error"])
+        await message.answer(
+            result["error"]
+        )
         return
 
     if result["exceeded"]:
-        pending_expenses[message.from_user.id] = {
+        pending_expenses[telegram_id] = {
             "amount": amount,
             "category": category,
             "description": text,
@@ -470,14 +667,16 @@ async def operation_handler(message: Message):
         return
 
     saved = await save_expense(
-        telegram_id=message.from_user.id,
+        telegram_id=telegram_id,
         amount=amount,
         category_name=category,
         description=text,
     )
 
     if not saved["success"]:
-        await message.answer(saved["error"])
+        await message.answer(
+            saved["error"]
+        )
         return
 
     await message.answer(
@@ -493,12 +692,19 @@ async def operation_handler(message: Message):
 
 
 @router.callback_query(
-    lambda callback: callback.data == "confirm_expense"
+    lambda callback: (
+        callback.data == "confirm_expense"
+    )
 )
-async def confirm_expense(callback: CallbackQuery):
+async def confirm_expense(
+    callback: CallbackQuery
+):
     telegram_id = callback.from_user.id
 
-    expense = pending_expenses.pop(telegram_id, None)
+    expense = pending_expenses.pop(
+        telegram_id,
+        None,
+    )
 
     if not expense:
         await callback.answer(
@@ -526,7 +732,8 @@ async def confirm_expense(callback: CallbackQuery):
             f"✅ Расход записан с превышением.\n\n"
             f"Категория: {result['category']}\n"
             f"Сумма: {result['amount']:,.0f} ₽\n"
-            f"Превышение: {abs(result['remaining']):,.0f} ₽"
+            f"Превышение: "
+            f"{abs(result['remaining']):,.0f} ₽"
         ).replace(",", " ")
     )
 
@@ -534,10 +741,17 @@ async def confirm_expense(callback: CallbackQuery):
 
 
 @router.callback_query(
-    lambda callback: callback.data == "cancel_expense"
+    lambda callback: (
+        callback.data == "cancel_expense"
+    )
 )
-async def cancel_expense(callback: CallbackQuery):
-    pending_expenses.pop(callback.from_user.id, None)
+async def cancel_expense(
+    callback: CallbackQuery
+):
+    pending_expenses.pop(
+        callback.from_user.id,
+        None,
+    )
 
     await callback.message.edit_text(
         "❌ Расход не записан."
