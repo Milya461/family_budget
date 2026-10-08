@@ -1,20 +1,29 @@
 from aiogram import Router
 from aiogram.filters import CommandStart
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
 
-from app.budget import add_expense, add_income
+import aiosqlite
+
+from app.budget import (
+    add_income,
+    check_expense,
+    save_expense,
+)
 from app.db import DB_PATH
-from app.keyboards import main_menu
+from app.keyboards import (
+    confirm_expense_keyboard,
+    main_menu,
+)
 from app.parser import (
     detect_category,
     detect_income,
     extract_amount,
 )
 
-import aiosqlite
-
 
 router = Router()
+
+pending_expenses = {}
 
 
 @router.message(CommandStart())
@@ -91,36 +100,108 @@ async def operation_handler(message: Message):
         )
         return
 
-    result = await add_expense(
+    result = await check_expense(
         telegram_id=message.from_user.id,
         amount=amount,
         category_name=category,
-        description=text,
     )
 
     if not result["success"]:
         await message.answer(result["error"])
         return
 
-    remaining = result["remaining"]
-
     if result["exceeded"]:
+        pending_expenses[message.from_user.id] = {
+            "amount": amount,
+            "category": category,
+            "description": text,
+        }
+
         await message.answer(
-            f"⚠️ Расход записан.\n\n"
-            f"Категория: {result['category']}\n"
-            f"Сумма: {amount:,.0f} ₽\n\n"
+            f"⚠️ Расход превысит лимит.\n\n"
+            f"Категория: {category}\n"
+            f"Сумма: {amount:,.0f} ₽\n"
             f"Лимит: {result['limit']:,.0f} ₽\n"
-            f"Потрачено: {result['spent']:,.0f} ₽\n"
-            f"Превышение: {abs(remaining):,.0f} ₽".replace(",", " "),
-            reply_markup=main_menu(),
+            f"Уже потрачено: {result['spent']:,.0f} ₽\n"
+            f"После покупки будет превышение на "
+            f"{abs(result['remaining']):,.0f} ₽.\n\n"
+            "Записать расход всё равно?".replace(",", " "),
+            reply_markup=confirm_expense_keyboard(),
         )
+        return
+
+    saved = await save_expense(
+        telegram_id=message.from_user.id,
+        amount=amount,
+        category_name=category,
+        description=text,
+    )
+
+    if not saved["success"]:
+        await message.answer(saved["error"])
         return
 
     await message.answer(
         f"✅ Расход записан.\n\n"
-        f"Категория: {result['category']}\n"
-        f"Сумма: {amount:,.0f} ₽\n\n"
-        f"Потрачено за месяц: {result['spent']:,.0f} ₽\n"
-        f"Остаток категории: {remaining:,.0f} ₽".replace(",", " "),
+        f"Категория: {saved['category']}\n"
+        f"Сумма: {amount:,.0f} ₽\n"
+        f"Потрачено за месяц: {saved['spent']:,.0f} ₽\n"
+        f"Остаток категории: {saved['remaining']:,.0f} ₽".replace(
+            ",", " "
+        ),
         reply_markup=main_menu(),
     )
+
+
+@router.callback_query(
+    lambda callback: callback.data == "confirm_expense"
+)
+async def confirm_expense(callback: CallbackQuery):
+    telegram_id = callback.from_user.id
+
+    expense = pending_expenses.pop(telegram_id, None)
+
+    if not expense:
+        await callback.answer(
+            "Операция уже обработана.",
+            show_alert=True,
+        )
+        return
+
+    result = await save_expense(
+        telegram_id=telegram_id,
+        amount=expense["amount"],
+        category_name=expense["category"],
+        description=expense["description"],
+    )
+
+    if not result["success"]:
+        await callback.answer(
+            "Не удалось записать расход.",
+            show_alert=True,
+        )
+        return
+
+    await callback.message.edit_text(
+        f"✅ Расход записан с превышением.\n\n"
+        f"Категория: {result['category']}\n"
+        f"Сумма: {result['amount']:,.0f} ₽\n"
+        f"Превышение: {abs(result['remaining']):,.0f} ₽".replace(
+            ",", " "
+        )
+    )
+
+    await callback.answer()
+
+
+@router.callback_query(
+    lambda callback: callback.data == "cancel_expense"
+)
+async def cancel_expense(callback: CallbackQuery):
+    pending_expenses.pop(callback.from_user.id, None)
+
+    await callback.message.edit_text(
+        "❌ Расход не записан."
+    )
+
+    await callback.answer()
