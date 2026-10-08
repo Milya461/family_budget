@@ -2,3 +2,7 @@ name = "family-budget"
 version = "0.1.0"
 description = "Family Budget Telegram Bot"
 requires-python = ">=3.11"
+
+dependencies = [
+    "workers-py",
+]
