@@ -1,7 +1,5 @@
 import json
-from datetime import datetime
 from urllib.parse import urlparse
-from zoneinfo import ZoneInfo
 
 from workers import WorkerEntrypoint, Response, fetch
 
@@ -592,9 +590,7 @@ async def send_mandatory(
     bot,
     chat_id,
 ):
-    month = datetime.now(
-        ZoneInfo("Europe/Moscow")
-    ).strftime("%Y-%m")
+    month = get_moscow_today().strftime("%Y-%m")
 
     payments = await get_month_mandatory_payments(
         month
