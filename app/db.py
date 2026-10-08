@@ -97,6 +97,16 @@ async def init_db():
                 FOREIGN KEY (debt_id) REFERENCES debts(id)
             );
 
+            CREATE TABLE IF NOT EXISTS pending_income (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                telegram_id INTEGER UNIQUE NOT NULL,
+                salary_event_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                FOREIGN KEY (telegram_id) REFERENCES users(telegram_id),
+                FOREIGN KEY (salary_event_id) REFERENCES salary_events(id)
+            );
+
             CREATE TABLE IF NOT EXISTS bot_settings (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
