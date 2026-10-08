@@ -1,4 +1,5 @@
 import json
+import traceback
 from urllib.parse import urlparse
 
 from workers import WorkerEntrypoint, Response, fetch
@@ -1422,6 +1423,12 @@ class Default(
                 )
 
             except Exception as error:
+                print(
+                    "TELEGRAM_WEBHOOK_ERROR:",
+                    repr(error),
+                    traceback.format_exc(),
+                )
+
                 message = (
                     update.get("message")
                     or {}
@@ -1447,26 +1454,22 @@ class Default(
 
                 if error_chat_id is not None:
                     try:
-                        await clear_state(
-                            error_chat_id
-                        )
-
-                        await remove_pending_income(
-                            error_chat_id
-                        )
-
                         await bot.send_message(
                             error_chat_id,
                             (
                                 "⚠️ Не удалось обработать "
                                 "операцию.\n\n"
-                                "Текущее действие отменено. "
-                                "Главное меню:"
+                                "Ошибка записана в журнал Worker. "
+                                "Попробуй ещё раз."
                             ),
                             main_menu(),
                         )
-                    except Exception:
-                        pass
+                    except Exception as send_error:
+                        print(
+                            "TELEGRAM_ERROR_NOTIFICATION_FAILED:",
+                            repr(send_error),
+                            traceback.format_exc(),
+                        )
 
             return Response("ok")
 
