@@ -76,6 +76,7 @@ async def save_actual_income(
     event_id: int,
     actual_income: float,
     actual_date: date | None = None,
+    telegram_id: int | None = None,
 ):
     event = await fetch_one(
         """
@@ -101,6 +102,12 @@ async def save_actual_income(
             "error": "Этот доход уже был записан.",
         }
 
+    if telegram_id is None:
+        return {
+            "success": False,
+            "error": "Пользователь не определён.",
+        }
+
     if actual_date is None:
         operation_date = event["event_date"]
     else:
@@ -110,9 +117,9 @@ async def save_actual_income(
         """
         SELECT id
         FROM users
-        ORDER BY id
-        LIMIT 1
-        """
+        WHERE telegram_id = ?
+        """,
+        telegram_id,
     )
 
     if user_id is None:
@@ -204,6 +211,7 @@ async def create_mandatory_payment(
 async def save_actual_payment(
     payment_id: int,
     actual_amount: float,
+    telegram_id: int | None = None,
 ):
     payment = await fetch_one(
         """
@@ -249,13 +257,19 @@ async def save_actual_payment(
             ),
         }
 
+    if telegram_id is None:
+        return {
+            "success": False,
+            "error": "Пользователь не определён.",
+        }
+
     user_id = await fetch_value(
         """
         SELECT id
         FROM users
-        ORDER BY id
-        LIMIT 1
-        """
+        WHERE telegram_id = ?
+        """,
+        telegram_id,
     )
 
     if user_id is None:
