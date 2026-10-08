@@ -595,10 +595,69 @@ async def monthly_report_button(
 async def savings_button(
     message: Message,
 ):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """
+            SELECT
+                balance,
+                monthly_target
+            FROM savings
+            WHERE id = 1
+            """
+        )
+
+        row = await cursor.fetchone()
+
+    if not row:
+        await message.answer(
+            "🐷 Копилка\n\n"
+            "Не удалось получить данные копилки."
+        )
+        return
+
+    balance = row[0] or 0
+    monthly_target = row[1] or 23000
+
+    month = get_moscow_today().strftime(
+        "%Y-%m"
+    )
+
+    cursor = await db.execute(
+        """
+        SELECT
+            COALESCE(SUM(amount), 0)
+        FROM monthly_allocations
+        WHERE month = ?
+          AND category_id IS NULL
+          AND debt_id IS NULL
+          AND source = 'savings'
+        """,
+        (month,),
+    )
+
+    monthly_row = await cursor.fetchone()
+
+    monthly_saved = (
+        monthly_row[0]
+        if monthly_row
+        else 0
+    )
+
+    monthly_remaining = max(
+        monthly_target - monthly_saved,
+        0,
+    )
+
     await message.answer(
-        "🐷 Копилка\n\n"
-        "Цель накоплений: 23 000 ₽ в месяц.\n"
-        "Подробный баланс копилки добавим следующим этапом."
+        (
+            "🐷 Копилка\n\n"
+            f"💰 Всего накоплено: {balance:,.0f} ₽\n"
+            f"🎯 Цель на месяц: {monthly_target:,.0f} ₽\n"
+            f"📈 Уже отложено в этом месяце: "
+            f"{monthly_saved:,.0f} ₽\n"
+            f"⏳ Осталось до цели месяца: "
+            f"{monthly_remaining:,.0f} ₽"
+        ).replace(",", " ")
     )
 
 
