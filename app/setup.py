@@ -56,14 +56,27 @@ async def setup():
             )
 
         for day, name, amount in INCOME_PLANS:
-            await db.execute(
-                """
-                INSERT OR IGNORE INTO income_plans
-                (day_of_month, name, planned_amount)
-                VALUES (?, ?, ?)
-                """,
-                (day, name, amount),
-            )
+    cursor = await db.execute(
+        """
+        SELECT id
+        FROM income_plans
+        WHERE day_of_month = ?
+          AND name = ?
+        """,
+        (day, name),
+    )
+
+    existing = await cursor.fetchone()
+
+    if not existing:
+        await db.execute(
+            """
+            INSERT INTO income_plans
+            (day_of_month, name, planned_amount)
+            VALUES (?, ?, ?)
+            """,
+            (day, name, amount),
+        )
 
         await db.execute(
             """
