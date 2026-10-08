@@ -680,6 +680,7 @@ async def mandatory_payment_amount(
     result = await record_actual_payment(
         payment_id=payment_id,
         actual_amount=amount,
+        telegram_id=message.from_user.id,
     )
 
     await state.clear()
