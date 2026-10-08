@@ -240,9 +240,7 @@ async def test_full_monthly_budget_flow():
     # Реальные расходы на жизнь.
     # -------------------------------------------------
 
-    Пока_tолько_распределение = report["life_expenses"]
-
-    assert Пока_tолько_распределение == 0
+    assert report["life_expenses"] == 0
 
     assert budget["spent"] == 0
 
@@ -322,10 +320,7 @@ async def test_full_monthly_budget_flow():
     # ещё не было, весь распределённый бюджет
     # доступен для трат.
     for category in report["categories"]:
-        assert (
-            category["spent"]
-            == 0
-        )
+        assert category["spent"] == 0
 
         assert (
             category["allocated"]
