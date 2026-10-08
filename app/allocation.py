@@ -3,7 +3,7 @@ from zoneinfo import ZoneInfo
 
 import aiosqlite
 
-from app.db import DB_PATH
+from app import db
 
 
 MOSCOW_TIMEZONE = ZoneInfo("Europe/Moscow")
@@ -16,8 +16,8 @@ def get_moscow_today():
 
 
 async def get_monthly_category_budgets():
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
+    async with aiosqlite.connect(db.DB_PATH) as connection:
+        cursor = await connection.execute(
             """
             SELECT
                 id,
@@ -45,8 +45,8 @@ async def get_monthly_category_spent(
     category_id: int,
     month: str,
 ):
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
+    async with aiosqlite.connect(db.DB_PATH) as connection:
+        cursor = await connection.execute(
             """
             SELECT COALESCE(SUM(amount), 0)
             FROM operations
@@ -66,8 +66,8 @@ async def get_monthly_category_spent(
 
 
 async def get_savings_target():
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
+    async with aiosqlite.connect(db.DB_PATH) as connection:
+        cursor = await connection.execute(
             """
             SELECT monthly_target
             FROM savings
@@ -81,8 +81,8 @@ async def get_savings_target():
 
 
 async def get_savings_balance():
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
+    async with aiosqlite.connect(db.DB_PATH) as connection:
+        cursor = await connection.execute(
             """
             SELECT balance
             FROM savings
@@ -98,8 +98,8 @@ async def get_savings_balance():
 async def get_monthly_allocation_totals(
     month: str,
 ):
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
+    async with aiosqlite.connect(db.DB_PATH) as connection:
+        cursor = await connection.execute(
             """
             SELECT
                 category_id,
@@ -114,7 +114,7 @@ async def get_monthly_allocation_totals(
 
         category_rows = await cursor.fetchall()
 
-        cursor = await db.execute(
+        cursor = await connection.execute(
             """
             SELECT
                 COALESCE(SUM(amount), 0)
@@ -149,8 +149,6 @@ async def calculate_remaining_monthly_budgets(
     Показывает, сколько ещё можно распределить
     в каждый месячный бюджет.
 
-    Важно:
-
     allocated = сколько денег уже виртуально
     зарезервировано за категорией.
 
@@ -158,14 +156,13 @@ async def calculate_remaining_monthly_budgets(
 
     Потраченные деньги НЕ вычитаются из allocated
     при расчёте следующего распределения.
-
-    Иначе одна и та же сумма была бы посчитана дважды.
     """
 
     if month is None:
         month = get_moscow_today().strftime("%Y-%m")
 
     categories = await get_monthly_category_budgets()
+
     allocations = await get_monthly_allocation_totals(
         month
     )
@@ -201,12 +198,22 @@ async def calculate_remaining_monthly_budgets(
             {
                 "id": category["id"],
                 "name": category["name"],
-                "monthly_limit": category["monthly_limit"],
+                "monthly_limit": category[
+                    "monthly_limit"
+                ],
                 "spent": spent,
-                "already_allocated": already_allocated,
-                "remaining": remaining_to_allocate,
-                "remaining_to_allocate": remaining_to_allocate,
-                "available_to_spend": available_to_spend,
+                "already_allocated": (
+                    already_allocated
+                ),
+                "remaining": (
+                    remaining_to_allocate
+                ),
+                "remaining_to_allocate": (
+                    remaining_to_allocate
+                ),
+                "available_to_spend": (
+                    available_to_spend
+                ),
             }
         )
 
@@ -226,8 +233,12 @@ async def calculate_remaining_monthly_budgets(
         "month": month,
         "categories": result,
         "savings_target": savings_target,
-        "savings_allocated": savings_allocated,
-        "savings_remaining": savings_remaining,
+        "savings_allocated": (
+            savings_allocated
+        ),
+        "savings_remaining": (
+            savings_remaining
+        ),
     }
 
 
@@ -245,6 +256,7 @@ async def get_monthly_budget_summary(
         month = get_moscow_today().strftime("%Y-%m")
 
     categories = await get_monthly_category_budgets()
+
     allocations = await get_monthly_allocation_totals(
         month
     )
@@ -286,7 +298,9 @@ async def get_monthly_budget_summary(
             0,
         ),
         "savings_target": savings_target,
-        "savings_allocated": savings_allocated,
+        "savings_allocated": (
+            savings_allocated
+        ),
         "savings_remaining": max(
             savings_target
             - savings_allocated,
@@ -303,16 +317,11 @@ def distribute_amount(
     """
     Распределяет остаток после обязательных платежей.
 
-    Порядок:
+    Сначала заполняются месячные бюджеты
+    категорий, затем остаток отправляется
+    в копилку.
 
-    1. Заполняются оставшиеся месячные бюджеты
-       категорий.
-
-    2. Затем остаток отправляется в копилку.
-
-    3. Сверх месячных целей деньги не распределяются.
-
-    Функция ничего не записывает в БД.
+    Сверх месячных целей деньги не распределяются.
     """
 
     if amount <= 0:
@@ -338,6 +347,7 @@ def distribute_amount(
     )
 
     result_categories = []
+
     remaining_amount = amount_to_distribute
 
     for category in category_budgets:
@@ -386,12 +396,13 @@ async def save_allocation(
     savings: float,
     source: str,
 ):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(db.DB_PATH) as connection:
+
         for category in categories:
             if category["amount"] <= 0:
                 continue
 
-            await db.execute(
+            await connection.execute(
                 """
                 INSERT INTO monthly_allocations (
                     month,
@@ -411,7 +422,7 @@ async def save_allocation(
             )
 
         if savings > 0:
-            await db.execute(
+            await connection.execute(
                 """
                 INSERT INTO monthly_allocations (
                     month,
@@ -425,7 +436,7 @@ async def save_allocation(
                 (month, savings),
             )
 
-            await db.execute(
+            await connection.execute(
                 """
                 UPDATE savings
                 SET balance = balance + ?
@@ -434,7 +445,7 @@ async def save_allocation(
                 (savings,),
             )
 
-        await db.commit()
+        await connection.commit()
 
 
 async def allocate_income_remainder(
@@ -467,7 +478,9 @@ async def allocate_income_remainder(
 
     distribution = distribute_amount(
         amount=amount,
-        category_budgets=budgets["categories"],
+        category_budgets=budgets[
+            "categories"
+        ],
         savings_remaining=budgets[
             "savings_remaining"
         ],
@@ -475,16 +488,25 @@ async def allocate_income_remainder(
 
     await save_allocation(
         month=month,
-        categories=distribution["categories"],
+        categories=distribution[
+            "categories"
+        ],
         savings=distribution["savings"],
-        source=f"income_{allocation_date.isoformat()}",
+        source=(
+            f"income_"
+            f"{allocation_date.isoformat()}"
+        ),
     )
 
     return {
         "success": True,
         "amount": amount,
         "month": month,
-        "categories": distribution["categories"],
+        "categories": distribution[
+            "categories"
+        ],
         "savings": distribution["savings"],
-        "unallocated": distribution["unallocated"],
+        "unallocated": distribution[
+            "unallocated"
+        ],
     }
