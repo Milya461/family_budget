@@ -1,10 +1,12 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-import aiosqlite
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from app.db import (
+    execute,
+    fetch_all,
+    fetch_one,
+)
 
-from app.db import DB_PATH
 from app.payment_flow import (
     find_income_event,
     start_income_event,
@@ -12,10 +14,6 @@ from app.payment_flow import (
 
 
 MOSCOW_TIMEZONE = ZoneInfo("Europe/Moscow")
-
-scheduler = AsyncIOScheduler(
-    timezone=MOSCOW_TIMEZONE
-)
 
 
 def get_moscow_today():
@@ -25,19 +23,16 @@ def get_moscow_today():
 
 
 async def get_users():
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            """
-            SELECT telegram_id
-            FROM users
-            ORDER BY id
-            """
-        )
-
-        rows = await cursor.fetchall()
+    rows = await fetch_all(
+        """
+        SELECT telegram_id
+        FROM users
+        ORDER BY id
+        """
+    )
 
     return [
-        row[0]
+        row["telegram_id"]
         for row in rows
     ]
 
@@ -45,26 +40,23 @@ async def get_users():
 async def get_pending_income(
     telegram_id: int,
 ):
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            """
-            SELECT
-                telegram_id,
-                salary_event_id
-            FROM pending_income
-            WHERE telegram_id = ?
-            """,
-            (telegram_id,),
-        )
-
-        row = await cursor.fetchone()
+    row = await fetch_one(
+        """
+        SELECT
+            telegram_id,
+            salary_event_id
+        FROM pending_income
+        WHERE telegram_id = ?
+        """,
+        telegram_id,
+    )
 
     if not row:
         return None
 
     return {
-        "telegram_id": row[0],
-        "salary_event_id": row[1],
+        "telegram_id": row["telegram_id"],
+        "salary_event_id": row["salary_event_id"],
     }
 
 
@@ -72,41 +64,34 @@ async def save_pending_income(
     telegram_id: int,
     salary_event_id: int,
 ):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            """
-            INSERT INTO pending_income (
-                telegram_id,
-                salary_event_id
-            )
-            VALUES (?, ?)
-            ON CONFLICT(telegram_id)
-            DO UPDATE SET
-                salary_event_id = excluded.salary_event_id,
-                created_at = CURRENT_TIMESTAMP
-            """,
-            (
-                telegram_id,
-                salary_event_id,
-            ),
+    await execute(
+        """
+        INSERT INTO pending_income (
+            telegram_id,
+            salary_event_id
         )
-
-        await db.commit()
+        VALUES (?, ?)
+        ON CONFLICT(telegram_id)
+        DO UPDATE SET
+            salary_event_id =
+                excluded.salary_event_id,
+            created_at = CURRENT_TIMESTAMP
+        """,
+        telegram_id,
+        salary_event_id,
+    )
 
 
 async def remove_pending_income(
     telegram_id: int,
 ):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            """
-            DELETE FROM pending_income
-            WHERE telegram_id = ?
-            """,
-            (telegram_id,),
-        )
-
-        await db.commit()
+    await execute(
+        """
+        DELETE FROM pending_income
+        WHERE telegram_id = ?
+        """,
+        telegram_id,
+    )
 
 
 async def build_income_message(
@@ -116,33 +101,37 @@ async def build_income_message(
 
     income_event = await find_income_event(
         planned_day=planned_day,
-        month=message_date.strftime("%Y-%m"),
+        month=message_date.strftime(
+            "%Y-%m"
+        ),
     )
 
     if income_event:
-        if income_event["status"] == "income_received":
+        if (
+            income_event["status"]
+            == "income_received"
+        ):
             return None
 
         event_id = income_event["id"]
-        planned_income = income_event["planned_income"]
+        planned_income = income_event[
+            "planned_income"
+        ]
 
-        async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute(
-                """
-                SELECT name
-                FROM income_plans
-                WHERE day_of_month = ?
-                  AND is_active = 1
-                ORDER BY id
-                LIMIT 1
-                """,
-                (planned_day,),
-            )
-
-            row = await cursor.fetchone()
+        row = await fetch_one(
+            """
+            SELECT name
+            FROM income_plans
+            WHERE day_of_month = ?
+              AND is_active = 1
+            ORDER BY id
+            LIMIT 1
+            """,
+            planned_day,
+        )
 
         income_name = (
-            row[0]
+            row["name"]
             if row
             else "Доход"
         )
@@ -199,7 +188,9 @@ async def send_income_prompt(
         try:
             await save_pending_income(
                 telegram_id=telegram_id,
-                salary_event_id=message_data["event_id"],
+                salary_event_id=message_data[
+                    "event_id"
+                ],
             )
 
             await bot.send_message(
@@ -219,9 +210,12 @@ async def daily_income_check(bot):
             planned_day=today.day,
         )
 
-    last_day = calendar_last_day(
-        today.year,
-        today.month,
+    last_day = (
+        __import__("calendar")
+        .monthrange(
+            today.year,
+            today.month,
+        )[1]
     )
 
     if (
@@ -232,32 +226,3 @@ async def daily_income_check(bot):
             bot=bot,
             planned_day=30,
         )
-
-
-def calendar_last_day(
-    year: int,
-    month: int,
-):
-    import calendar
-
-    return calendar.monthrange(
-        year,
-        month,
-    )[1]
-
-
-def start_scheduler(bot):
-    if scheduler.running:
-        return
-
-    scheduler.add_job(
-        daily_income_check,
-        trigger="cron",
-        hour=14,
-        minute=0,
-        args=[bot],
-        id="daily_income_check",
-        replace_existing=True,
-    )
-
-    scheduler.start()
