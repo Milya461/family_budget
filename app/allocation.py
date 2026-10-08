@@ -1,8 +1,18 @@
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 import aiosqlite
 
 from app.db import DB_PATH
+
+
+MOSCOW_TIMEZONE = ZoneInfo("Europe/Moscow")
+
+
+def get_moscow_today():
+    return datetime.now(
+        MOSCOW_TIMEZONE
+    ).date()
 
 
 async def get_monthly_category_budgets():
@@ -70,7 +80,24 @@ async def get_savings_target():
     return row[0] if row else 23000
 
 
-async def get_monthly_allocation_totals(month: str):
+async def get_savings_balance():
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """
+            SELECT balance
+            FROM savings
+            WHERE id = 1
+            """
+        )
+
+        row = await cursor.fetchone()
+
+    return row[0] if row else 0
+
+
+async def get_monthly_allocation_totals(
+    month: str,
+):
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             """
@@ -107,7 +134,11 @@ async def get_monthly_allocation_totals(month: str):
             row[0]: row[1]
             for row in category_rows
         },
-        "savings": savings_row[0] if savings_row else 0,
+        "savings": (
+            savings_row[0]
+            if savings_row
+            else 0
+        ),
     }
 
 
@@ -115,10 +146,14 @@ async def calculate_remaining_monthly_budgets(
     month: str | None = None,
 ):
     if month is None:
-        month = date.today().strftime("%Y-%m")
+        month = get_moscow_today().strftime(
+            "%Y-%m"
+        )
 
     categories = await get_monthly_category_budgets()
-    allocations = await get_monthly_allocation_totals(month)
+    allocations = await get_monthly_allocation_totals(
+        month
+    )
 
     result = []
 
@@ -128,7 +163,9 @@ async def calculate_remaining_monthly_budgets(
             month=month,
         )
 
-        already_allocated = allocations["categories"].get(
+        already_allocated = allocations[
+            "categories"
+        ].get(
             category["id"],
             0,
         )
@@ -153,10 +190,13 @@ async def calculate_remaining_monthly_budgets(
 
     savings_target = await get_savings_target()
 
-    savings_allocated = allocations["savings"]
+    savings_allocated = allocations[
+        "savings"
+    ]
 
     savings_remaining = max(
-        savings_target - savings_allocated,
+        savings_target
+        - savings_allocated,
         0,
     )
 
@@ -175,12 +215,16 @@ def distribute_amount(
     savings_remaining: float,
 ):
     """
-    Распределяет полученный остаток по оставшимся
-    месячным бюджетам.
+    Распределяет остаток после обязательных платежей.
 
-    Сначала заполняются категории, затем копилка.
-    Ничего сверх оставшихся месячных целей
-    не распределяется.
+    Порядок:
+    1. Заполняются оставшиеся месячные бюджеты категорий.
+    2. После категорий остаток отправляется в копилку.
+    3. Сверх месячных целей деньги не распределяются.
+
+    Важно:
+    функция ничего не записывает в БД.
+    Она только рассчитывает распределение.
     """
 
     if amount <= 0:
@@ -213,7 +257,9 @@ def distribute_amount(
         if remaining_amount <= 0:
             break
 
-        category_remaining = category["remaining"]
+        category_remaining = category[
+            "remaining"
+        ]
 
         if category_remaining <= 0:
             continue
@@ -295,6 +341,17 @@ async def save_allocation(
                 ),
             )
 
+            await db.execute(
+                """
+                UPDATE savings
+                SET balance = balance + ?
+                WHERE id = 1
+                """,
+                (
+                    savings,
+                ),
+            )
+
         await db.commit()
 
 
@@ -302,6 +359,19 @@ async def allocate_income_remainder(
     amount: float,
     allocation_date: date | None = None,
 ):
+    """
+    Распределяет остаток после обязательных платежей.
+
+    Например:
+
+    Доход: 50 000 ₽
+    Платежи: 17 642 + 14 983 ₽
+    Остаток: 17 375 ₽
+
+    Остаток распределяется между месячными
+    категориями и копилкой.
+    """
+
     if amount <= 0:
         return {
             "success": True,
@@ -312,9 +382,11 @@ async def allocate_income_remainder(
         }
 
     if allocation_date is None:
-        allocation_date = date.today()
+        allocation_date = get_moscow_today()
 
-    month = allocation_date.strftime("%Y-%m")
+    month = allocation_date.strftime(
+        "%Y-%m"
+    )
 
     budgets = await calculate_remaining_monthly_budgets(
         month
@@ -323,7 +395,9 @@ async def allocate_income_remainder(
     distribution = distribute_amount(
         amount=amount,
         category_budgets=budgets["categories"],
-        savings_remaining=budgets["savings_remaining"],
+        savings_remaining=budgets[
+            "savings_remaining"
+        ],
     )
 
     await save_allocation(
