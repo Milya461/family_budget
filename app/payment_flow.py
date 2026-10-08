@@ -14,6 +14,7 @@ from app.payments import (
     save_actual_income,
     save_actual_payment,
 )
+from app.allocation import allocate_income_remainder
 
 
 async def start_income_event(event_date: date):
@@ -79,10 +80,6 @@ async def record_actual_income(
     event_id: int,
     actual_income: float,
 ):
-    """
-    Записывает фактически полученный доход.
-    """
-
     if actual_income < 0:
         return {
             "success": False,
@@ -97,15 +94,36 @@ async def record_actual_income(
             "error": "Событие дохода не найдено.",
         }
 
-    await save_actual_income(
+    result = await save_actual_income(
         event_id=event_id,
         actual_income=actual_income,
     )
 
+    if not result["success"]:
+        return result
+
+    payments = await get_event_payments(event_id)
+
+    pending_payments = [
+        payment
+        for payment in payments
+        if payment["status"] != "paid"
+    ]
+
+    if not pending_payments:
+        allocation = await allocate_income_remainder(
+            amount=actual_income,
+            allocation_date=date.fromisoformat(
+                event["event_date"]
+            ),
+        )
+
+        result["allocation"] = allocation
+    else:
+        result["allocation"] = None
+
     return {
-        "success": True,
-        "event_id": event_id,
-        "actual_income": actual_income,
+        **result,
         "planned_income": event["planned_income"],
         "difference": actual_income - event["planned_income"],
     }
@@ -115,33 +133,81 @@ async def record_actual_payment(
     payment_id: int,
     actual_amount: float,
 ):
-    """
-    Записывает фактически внесённую сумму обязательного платежа.
-    """
-
     if actual_amount < 0:
         return {
             "success": False,
             "error": "Сумма платежа не может быть отрицательной.",
         }
 
-    await save_actual_payment(
+    saved = await save_actual_payment(
         payment_id=payment_id,
         actual_amount=actual_amount,
     )
 
+    if not saved:
+        return {
+            "success": False,
+            "error": "Обязательный платёж не найден.",
+        }
+
+    if not saved["success"]:
+        return saved
+
+    event_id = await get_payment_event_id(
+        payment_id
+    )
+
+    if not event_id:
+        return {
+            "success": False,
+            "error": "Событие дохода для платежа не найдено.",
+        }
+
+    summary = await get_event_summary(event_id)
+
+    allocation = None
+
+    if (
+        summary
+        and summary["event"]["actual_income"] is not None
+        and summary["all_payments_paid"]
+    ):
+        allocation = await allocate_income_remainder(
+            amount=summary["remaining"],
+            allocation_date=date.fromisoformat(
+                summary["event"]["event_date"]
+            ),
+        )
+
     return {
-        "success": True,
-        "payment_id": payment_id,
-        "actual_amount": actual_amount,
+        **saved,
+        "event_id": event_id,
+        "remaining": (
+            summary["remaining"]
+            if summary
+            else None
+        ),
+        "allocation": allocation,
     }
 
 
-async def get_event_summary(event_id: int):
-    """
-    Возвращает полную сводку по событию.
-    """
+async def get_payment_event_id(payment_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """
+            SELECT salary_event_id
+            FROM mandatory_payments
+            WHERE id = ?
+            """,
+            (payment_id,),
+        )
 
+        row = await cursor.fetchone()
+
+    return row[0] if row else None
+
+
+async def get_event_summary(event_id: int):
     event = await get_event(event_id)
 
     if not event:
@@ -161,6 +227,11 @@ async def get_event_summary(event_id: int):
 
     actual_income = event["actual_income"] or 0
 
+    all_payments_paid = all(
+        payment["status"] == "paid"
+        for payment in payments
+    )
+
     remaining = (
         actual_income
         - total_actual_payments
@@ -178,15 +249,11 @@ async def get_event_summary(event_id: int):
         "total_actual_payments": total_actual_payments,
         "planned_remaining": planned_remaining,
         "remaining": remaining,
+        "all_payments_paid": all_payments_paid,
     }
 
 
 async def get_current_balance():
-    """
-    Возвращает общий фактический баланс
-    по всем записанным операциям.
-    """
-
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             """
