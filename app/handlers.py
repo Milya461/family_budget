@@ -89,9 +89,13 @@ async def mandatory_payments_button(message: Message):
 
 @router.message(lambda message: message.text == "📊 Балансы")
 async def balances_button(message: Message):
+    from app.payment_flow import get_current_balance
+
+    balance = await get_current_balance()
+
     await message.answer(
         "📊 Балансы\n\n"
-        "Раздел балансов пока находится в разработке."
+        f"💳 Основной счёт: {balance:,.0f} ₽".replace(",", " ")
     )
 
 
