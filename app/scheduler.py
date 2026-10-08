@@ -11,7 +11,7 @@ from app.payment_flow import (
 )
 
 
-TIMEZONE = ZoneInfo("Europe/Amsterdam")
+TIMEZONE = ZoneInfo("Europe/Moscow")
 
 scheduler = AsyncIOScheduler(
     timezone=TIMEZONE
@@ -79,9 +79,11 @@ async def get_today_income_event():
 async def build_income_message(
     planned_day: int,
 ):
+    message_date = date.today()
+
     income_event = await find_income_event(
         planned_day=planned_day,
-        month=date.today().strftime("%Y-%m"),
+        month=message_date.strftime("%Y-%m"),
     )
 
     if income_event:
@@ -119,7 +121,7 @@ async def build_income_message(
         }
 
     result = await start_income_event(
-        event_date=date.today(),
+        event_date=message_date,
         planned_day=planned_day,
     )
 
