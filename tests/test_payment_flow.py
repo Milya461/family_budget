@@ -1,7 +1,9 @@
 from datetime import date
+from pathlib import Path
 
 import pytest
 
+from app import db
 from app.db import init_db
 from app.setup import setup
 from app.payment_flow import (
@@ -14,11 +16,26 @@ from app.payments import (
 )
 
 
-@pytest.mark.asyncio
-async def test_start_income_event():
+@pytest.fixture(autouse=True)
+async def clean_database(tmp_path, monkeypatch):
+    test_db = tmp_path / "test_family_budget.db"
+
+    monkeypatch.setattr(db, "DB_PATH", test_db)
+
+    import app.payment_flow
+    import app.payments
+    import app.setup
+
+    monkeypatch.setattr(app.payment_flow, "DB_PATH", test_db)
+    monkeypatch.setattr(app.payments, "DB_PATH", test_db)
+    monkeypatch.setattr(app.setup, "DB_PATH", test_db)
+
     await init_db()
     await setup()
 
+
+@pytest.mark.asyncio
+async def test_start_income_event():
     result = await start_income_event(
         date(2026, 10, 10)
     )
@@ -41,9 +58,6 @@ async def test_start_income_event():
 
 @pytest.mark.asyncio
 async def test_last_day_of_month_uses_day_30():
-    await init_db()
-    await setup()
-
     result = await start_income_event(
         date(2026, 10, 31)
     )
@@ -55,9 +69,6 @@ async def test_last_day_of_month_uses_day_30():
 
 @pytest.mark.asyncio
 async def test_current_balance():
-    await init_db()
-    await setup()
-
     balance = await get_current_balance()
 
     assert balance >= 0
@@ -65,9 +76,6 @@ async def test_current_balance():
 
 @pytest.mark.asyncio
 async def test_save_actual_mandatory_payment():
-    await init_db()
-    await setup()
-
     result = await start_income_event(
         date(2026, 10, 10)
     )
@@ -115,9 +123,6 @@ async def test_save_actual_mandatory_payment():
 
 @pytest.mark.asyncio
 async def test_actual_payment_can_be_different_from_plan():
-    await init_db()
-    await setup()
-
     result = await start_income_event(
         date(2026, 10, 10)
     )
@@ -141,3 +146,49 @@ async def test_actual_payment_can_be_different_from_plan():
     assert saved["planned_amount"] == 15000
     assert saved["actual_amount"] == 14983
     assert saved["difference"] == -17
+
+
+@pytest.mark.asyncio
+async def test_mandatory_payment_reduces_balance():
+    async with db.aiosqlite.connect(db.DB_PATH) as connection:
+        await connection.execute(
+            """
+            INSERT INTO users (
+                telegram_id,
+                name
+            )
+            VALUES (?, ?)
+            """,
+            (
+                123456789,
+                "Тестовый пользователь",
+            ),
+        )
+        await connection.commit()
+
+    result = await start_income_event(
+        date(2026, 10, 10)
+    )
+
+    payments = await get_event_payments(
+        result["event_id"]
+    )
+
+    credit_card = next(
+        payment
+        for payment in payments
+        if payment["payment_name"] == "Кредитная карта"
+    )
+
+    balance_before = await get_current_balance()
+
+    saved = await save_actual_payment(
+        payment_id=credit_card["id"],
+        actual_amount=17642,
+    )
+
+    assert saved["success"] is True
+
+    balance_after = await get_current_balance()
+
+    assert balance_after == balance_before - 17642
