@@ -693,24 +693,14 @@ async def process_callback(
     callback_id = callback["id"]
     data = callback.get("data", "")
 
-    message = (
-        callback.get("message")
-        or {}
-    )
-
-    chat = (
-        message.get("chat")
-        or {}
-    )
+    message = callback.get("message") or {}
+    chat = message.get("chat") or {}
 
     chat_id = chat.get("id")
-    message_id = message.get(
-        "message_id"
-    )
+    message_id = message.get("message_id")
 
     user_id = (
-        callback.get("from")
-        or {}
+        callback.get("from") or {}
     ).get("id")
 
     if user_id is None or chat_id is None:
@@ -740,13 +730,8 @@ async def process_callback(
         )
         return
 
-    if data.startswith(
-        "expense_category:"
-    ):
-        category = data.split(
-            ":",
-            1,
-        )[1]
+    if data.startswith("expense_category:"):
+        category = data.split(":", 1)[1]
 
         state, state_data = await get_state(
             user_id
@@ -760,14 +745,10 @@ async def process_callback(
             )
             return
 
-        amount = state_data.get(
-            "amount"
-        )
+        amount = state_data.get("amount")
 
         if amount is None:
-            await clear_state(
-                user_id
-            )
+            await clear_state(user_id)
 
             await bot.answer_callback(
                 callback_id,
@@ -785,9 +766,7 @@ async def process_callback(
             },
         )
 
-        await bot.answer_callback(
-            callback_id
-        )
+        await bot.answer_callback(callback_id)
 
         await bot.edit_message(
             chat_id,
@@ -802,9 +781,7 @@ async def process_callback(
         return
 
     if data == "confirm_expense":
-        state, state_data = await get_state(
-            user_id
-        )
+        state, state_data = await get_state(user_id)
 
         if state != "expense_confirm":
             await bot.answer_callback(
@@ -824,14 +801,10 @@ async def process_callback(
             ),
         )
 
-        await clear_state(
-            user_id
-        )
+        await clear_state(user_id)
 
         if not result["success"]:
-            await bot.answer_callback(
-                callback_id
-            )
+            await bot.answer_callback(callback_id)
 
             await bot.edit_message(
                 chat_id,
@@ -846,7 +819,10 @@ async def process_callback(
             )
             return
 
-        balance = await get_current_balance()
+        try:
+            balance = await get_current_balance()
+        except Exception:
+            balance = None
 
         await bot.answer_callback(
             callback_id,
@@ -865,25 +841,28 @@ async def process_callback(
             ),
         )
 
-        await bot.send_message(
-            chat_id,
-            (
-                f"💳 Основной счёт: "
-                f"{money(balance)} ₽"
-            ),
-            main_menu(),
-        )
+        if balance is None:
+            await bot.send_message(
+                chat_id,
+                "Главное меню:",
+                main_menu(),
+            )
+        else:
+            await bot.send_message(
+                chat_id,
+                (
+                    f"💳 Основной счёт: "
+                    f"{money(balance)} ₽"
+                ),
+                main_menu(),
+            )
+
         return
 
-    if data.startswith(
-        "mandatory_payment:"
-    ):
+    if data.startswith("mandatory_payment:"):
         try:
             payment_id = int(
-                data.split(
-                    ":",
-                    1,
-                )[1]
+                data.split(":", 1)[1]
             )
         except (
             TypeError,
@@ -921,18 +900,12 @@ async def process_callback(
             "payment_amount",
             {
                 "payment_id": payment_id,
-                "payment_name": (
-                    payment["payment_name"]
-                ),
-                "planned": (
-                    payment["planned_amount"]
-                ),
+                "payment_name": payment["payment_name"],
+                "planned": payment["planned_amount"],
             },
         )
 
-        await bot.answer_callback(
-            callback_id
-        )
+        await bot.answer_callback(callback_id)
 
         await bot.edit_message(
             chat_id,
@@ -949,48 +922,31 @@ async def process_callback(
         )
         return
 
-    await bot.answer_callback(
-        callback_id
-    )
+    await bot.answer_callback(callback_id)
 
 
 async def process_message(
     bot,
     message,
 ):
-    chat = (
-        message.get("chat")
-        or {}
-    )
-
-    user = (
-        message.get("from")
-        or {}
-    )
+    chat = message.get("chat") or {}
+    user = message.get("from") or {}
 
     chat_id = chat.get("id")
     user_id = user.get("id")
 
     text = (
-        message.get("text")
-        or ""
+        message.get("text") or ""
     ).strip()
 
     if chat_id is None or user_id is None:
         return
 
-    await ensure_user(
-        user_id
-    )
+    await ensure_user(user_id)
 
     if text.startswith("/start"):
-        await clear_state(
-            user_id
-        )
-
-        await remove_pending_income(
-            user_id
-        )
+        await clear_state(user_id)
+        await remove_pending_income(user_id)
 
         await send_start(
             bot,
@@ -999,15 +955,13 @@ async def process_message(
         return
 
     if text == "↩️ Отменить последнюю операцию":
-        await clear_state(
-            user_id
-        )
+        await clear_state(user_id)
+        await remove_pending_income(user_id)
 
         await bot.send_message(
             chat_id,
             (
-                "↩️ Отмена последней операции "
-                "пока недоступна."
+                "↩️ Текущая операция отменена."
             ),
             main_menu(),
         )
@@ -1035,24 +989,33 @@ async def process_message(
                 telegram_id=user_id,
             )
 
-            await remove_pending_income(
-                user_id
-            )
-
-            await clear_state(
-                user_id
-            )
+            await remove_pending_income(user_id)
+            await clear_state(user_id)
 
             if result["success"]:
-                await bot.send_message(
-                    chat_id,
-                    (
+                try:
+                    balance = await get_current_balance()
+                except Exception:
+                    balance = None
+
+                if balance is None:
+                    response_text = (
+                        "✅ Доход записан.\n\n"
+                        f"Фактически: "
+                        f"{money(amount)} ₽"
+                    )
+                else:
+                    response_text = (
                         "✅ Доход записан.\n\n"
                         f"Фактически: "
                         f"{money(amount)} ₽\n"
                         f"Основной счёт: "
-                        f"{money(await get_current_balance())} ₽"
-                    ),
+                        f"{money(balance)} ₽"
+                    )
+
+                await bot.send_message(
+                    chat_id,
+                    response_text,
                     main_menu(),
                 )
             else:
@@ -1091,9 +1054,7 @@ async def process_message(
             description="Доход",
         )
 
-        await clear_state(
-            user_id
-        )
+        await clear_state(user_id)
 
         if not result["success"]:
             await bot.send_message(
@@ -1103,14 +1064,27 @@ async def process_message(
             )
             return
 
-        await bot.send_message(
-            chat_id,
-            (
+        try:
+            balance = await get_current_balance()
+        except Exception:
+            balance = None
+
+        if balance is None:
+            response_text = (
+                "✅ Доход записан.\n\n"
+                f"Сумма: {money(amount)} ₽"
+            )
+        else:
+            response_text = (
                 "✅ Доход записан.\n\n"
                 f"Сумма: {money(amount)} ₽\n"
                 f"Основной счёт: "
-                f"{money(await get_current_balance())} ₽"
-            ),
+                f"{money(balance)} ₽"
+            )
+
+        await bot.send_message(
+            chat_id,
+            response_text,
             main_menu(),
         )
         return
@@ -1217,16 +1191,12 @@ async def process_message(
             return
 
         result = await record_actual_payment(
-            payment_id=state_data[
-                "payment_id"
-            ],
+            payment_id=state_data["payment_id"],
             actual_amount=amount,
             telegram_id=user_id,
         )
 
-        await clear_state(
-            user_id
-        )
+        await clear_state(user_id)
 
         if not result["success"]:
             await bot.send_message(
@@ -1236,17 +1206,33 @@ async def process_message(
             )
             return
 
-        await bot.send_message(
-            chat_id,
-            (
+        try:
+            balance = await get_current_balance()
+        except Exception:
+            balance = None
+
+        if balance is None:
+            response_text = (
+                "✅ Платёж записан.\n\n"
+                f"Платёж: "
+                f"{state_data['payment_name']}\n"
+                f"Фактически: "
+                f"{money(amount)} ₽"
+            )
+        else:
+            response_text = (
                 "✅ Платёж записан.\n\n"
                 f"Платёж: "
                 f"{state_data['payment_name']}\n"
                 f"Фактически: "
                 f"{money(amount)} ₽\n"
                 f"💳 Основной счёт: "
-                f"{money(await get_current_balance())} ₽"
-            ),
+                f"{money(balance)} ₽"
+            )
+
+        await bot.send_message(
+            chat_id,
+            response_text,
             main_menu(),
         )
         return
@@ -1284,9 +1270,7 @@ async def process_message(
         return
 
     if text == "🏦 Обязательные платежи":
-        await clear_state(
-            user_id
-        )
+        await clear_state(user_id)
 
         await send_mandatory(
             bot,
@@ -1295,9 +1279,7 @@ async def process_message(
         return
 
     if text == "📊 Балансы":
-        await clear_state(
-            user_id
-        )
+        await clear_state(user_id)
 
         await send_balances(
             bot,
@@ -1306,9 +1288,7 @@ async def process_message(
         return
 
     if text == "📅 Отчёт за месяц":
-        await clear_state(
-            user_id
-        )
+        await clear_state(user_id)
 
         await send_report(
             bot,
@@ -1356,6 +1336,24 @@ async def process_message(
         ),
         main_menu(),
     )
+
+
+async def process_update(
+    bot,
+    update,
+):
+    if update.get("callback_query"):
+        await process_callback(
+            bot,
+            update["callback_query"],
+        )
+        return
+
+    if update.get("message"):
+        await process_message(
+            bot,
+            update["message"],
+        )
 
 
 class Default(
@@ -1415,29 +1413,62 @@ class Default(
 
             update = await request.json()
 
-            bot = TelegramBot(
-                token
-            )
+            bot = TelegramBot(token)
 
-            if update.get(
-                "callback_query"
-            ):
-                await process_callback(
+            try:
+                await process_update(
                     bot,
-                    update["callback_query"],
+                    update,
                 )
 
-            elif update.get(
-                "message"
-            ):
-                await process_message(
-                    bot,
-                    update["message"],
+            except Exception as error:
+                message = (
+                    update.get("message")
+                    or {}
                 )
 
-            return Response(
-                "ok"
-            )
+                callback = (
+                    update.get("callback_query")
+                    or {}
+                )
+
+                callback_message = (
+                    callback.get("message")
+                    or {}
+                )
+
+                error_chat = (
+                    message.get("chat")
+                    or callback_message.get("chat")
+                    or {}
+                )
+
+                error_chat_id = error_chat.get("id")
+
+                if error_chat_id is not None:
+                    try:
+                        await clear_state(
+                            error_chat_id
+                        )
+
+                        await remove_pending_income(
+                            error_chat_id
+                        )
+
+                        await bot.send_message(
+                            error_chat_id,
+                            (
+                                "⚠️ Не удалось обработать "
+                                "операцию.\n\n"
+                                "Текущее действие отменено. "
+                                "Главное меню:"
+                            ),
+                            main_menu(),
+                        )
+                    except Exception:
+                        pass
+
+            return Response("ok")
 
         return Response(
             "Family Budget bot is running."
@@ -1464,9 +1495,7 @@ class Default(
         if not token:
             return
 
-        bot = TelegramBot(
-            token
-        )
+        bot = TelegramBot(token)
 
         await daily_income_check(
             bot
