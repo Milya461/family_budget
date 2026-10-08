@@ -1,9 +1,11 @@
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
-import aiosqlite
-
-from app import db
+from app.db import (
+    execute_many,
+    fetch_all,
+    fetch_value,
+)
 
 
 MOSCOW_TIMEZONE = ZoneInfo("Europe/Moscow")
@@ -16,26 +18,23 @@ def get_moscow_today():
 
 
 async def get_monthly_category_budgets():
-    async with aiosqlite.connect(db.DB_PATH) as connection:
-        cursor = await connection.execute(
-            """
-            SELECT
-                id,
-                name,
-                monthly_limit
-            FROM categories
-            WHERE is_active = 1
-            ORDER BY id
-            """
-        )
-
-        rows = await cursor.fetchall()
+    rows = await fetch_all(
+        """
+        SELECT
+            id,
+            name,
+            monthly_limit
+        FROM categories
+        WHERE is_active = 1
+        ORDER BY id
+        """
+    )
 
     return [
         {
-            "id": row[0],
-            "name": row[1],
-            "monthly_limit": row[2],
+            "id": row["id"],
+            "name": row["name"],
+            "monthly_limit": row["monthly_limit"],
         }
         for row in rows
     ]
@@ -45,119 +44,83 @@ async def get_monthly_category_spent(
     category_id: int,
     month: str,
 ):
-    async with aiosqlite.connect(db.DB_PATH) as connection:
-        cursor = await connection.execute(
-            """
-            SELECT COALESCE(SUM(amount), 0)
-            FROM operations
-            WHERE category_id = ?
-              AND operation_type = 'expense'
-              AND substr(operation_date, 1, 7) = ?
-            """,
-            (
-                category_id,
-                month,
-            ),
-        )
+    value = await fetch_value(
+        """
+        SELECT COALESCE(SUM(amount), 0)
+        FROM operations
+        WHERE category_id = ?
+          AND operation_type = 'expense'
+          AND substr(operation_date, 1, 7) = ?
+        """,
+        category_id,
+        month,
+    )
 
-        row = await cursor.fetchone()
-
-    return row[0] or 0
+    return value or 0
 
 
 async def get_savings_target():
-    async with aiosqlite.connect(db.DB_PATH) as connection:
-        cursor = await connection.execute(
-            """
-            SELECT monthly_target
-            FROM savings
-            WHERE id = 1
-            """
-        )
+    value = await fetch_value(
+        """
+        SELECT monthly_target
+        FROM savings
+        WHERE id = 1
+        """
+    )
 
-        row = await cursor.fetchone()
-
-    return row[0] if row else 23000
+    return value if value is not None else 23000
 
 
 async def get_savings_balance():
-    async with aiosqlite.connect(db.DB_PATH) as connection:
-        cursor = await connection.execute(
-            """
-            SELECT balance
-            FROM savings
-            WHERE id = 1
-            """
-        )
+    value = await fetch_value(
+        """
+        SELECT balance
+        FROM savings
+        WHERE id = 1
+        """
+    )
 
-        row = await cursor.fetchone()
-
-    return row[0] if row else 0
+    return value if value is not None else 0
 
 
 async def get_monthly_allocation_totals(
     month: str,
 ):
-    async with aiosqlite.connect(db.DB_PATH) as connection:
-        cursor = await connection.execute(
-            """
-            SELECT
-                category_id,
-                COALESCE(SUM(amount), 0)
-            FROM monthly_allocations
-            WHERE month = ?
-              AND category_id IS NOT NULL
-            GROUP BY category_id
-            """,
-            (month,),
-        )
+    category_rows = await fetch_all(
+        """
+        SELECT
+            category_id,
+            COALESCE(SUM(amount), 0) AS amount
+        FROM monthly_allocations
+        WHERE month = ?
+          AND category_id IS NOT NULL
+        GROUP BY category_id
+        """,
+        month,
+    )
 
-        category_rows = await cursor.fetchall()
-
-        cursor = await connection.execute(
-            """
-            SELECT
-                COALESCE(SUM(amount), 0)
-            FROM monthly_allocations
-            WHERE month = ?
-              AND category_id IS NULL
-              AND debt_id IS NULL
-              AND source = 'savings'
-            """,
-            (month,),
-        )
-
-        savings_row = await cursor.fetchone()
+    savings_value = await fetch_value(
+        """
+        SELECT COALESCE(SUM(savings_amount), 0)
+        FROM monthly_allocations
+        WHERE month = ?
+          AND savings_amount > 0
+        """,
+        month,
+    )
 
     return {
         "categories": {
-            row[0]: row[1]
+            row["category_id"]: row["amount"]
             for row in category_rows
         },
-        "savings": (
-            savings_row[0]
-            if savings_row
-            else 0
-        ),
+        "savings": savings_value or 0,
     }
 
 
 async def calculate_remaining_monthly_budgets(
     month: str | None = None,
 ):
-    """
-    Показывает, сколько ещё можно распределить
-    в каждый месячный бюджет.
-
-    allocated = сколько денег уже виртуально
-    зарезервировано за категорией.
-
-    spent = сколько реально потрачено.
-
-    Потраченные деньги НЕ вычитаются из allocated
-    при расчёте следующего распределения.
-    """
-
     if month is None:
         month = get_moscow_today().strftime(
             "%Y-%m"
@@ -235,25 +198,14 @@ async def calculate_remaining_monthly_budgets(
         "month": month,
         "categories": result,
         "savings_target": savings_target,
-        "savings_allocated": (
-            savings_allocated
-        ),
-        "savings_remaining": (
-            savings_remaining
-        ),
+        "savings_allocated": savings_allocated,
+        "savings_remaining": savings_remaining,
     }
 
 
 async def get_monthly_budget_summary(
     month: str | None = None,
 ):
-    """
-    Общая картина месячного бюджета.
-
-    Распределение по категориям — виртуальное.
-    Реальные траты считаются отдельно.
-    """
-
     if month is None:
         month = get_moscow_today().strftime(
             "%Y-%m"
@@ -302,12 +254,9 @@ async def get_monthly_budget_summary(
             0,
         ),
         "savings_target": savings_target,
-        "savings_allocated": (
-            savings_allocated
-        ),
+        "savings_allocated": savings_allocated,
         "savings_remaining": max(
-            savings_target
-            - savings_allocated,
+            savings_target - savings_allocated,
             0,
         ),
     }
@@ -318,34 +267,6 @@ def distribute_amount(
     category_budgets: list[dict],
     savings_remaining: float,
 ):
-    """
-    Распределяет доступную сумму.
-
-    Сначала деньги распределяются между всеми
-    категориями пропорционально их оставшимся
-    месячным лимитам.
-
-    После полного заполнения месячного бюджета
-    категорий остаток направляется в копилку.
-
-    Пример:
-
-    Если осталось распределить 17 000 ₽,
-    деньги не уходят целиком в первую категорию.
-
-    Они распределяются между:
-    - Продуктами,
-    - Бензином,
-    - Питомцами,
-    - Домом и бытом,
-    - и остальными категориями
-
-    пропорционально их лимитам.
-
-    Виртуальное распределение по категориям
-    не считается реальным расходом.
-    """
-
     if amount <= 0:
         return {
             "categories": [],
@@ -392,14 +313,10 @@ def distribute_amount(
                     - distributed
                 )
             else:
-                allocation = (
+                allocation = round(
                     amount_for_categories
                     * category_remaining
-                    / category_total
-                )
-
-                allocation = round(
-                    allocation,
+                    / category_total,
                     2,
                 )
 
@@ -427,8 +344,7 @@ def distribute_amount(
     )
 
     remaining_amount = max(
-        amount
-        - allocated_to_categories,
+        amount - allocated_to_categories,
         0,
     )
 
@@ -454,90 +370,78 @@ async def save_allocation(
     categories: list[dict],
     savings: float,
     source: str,
+    allocation_date: date,
 ):
-    async with aiosqlite.connect(
-        db.DB_PATH
-    ) as connection:
+    statements = []
 
-        for category in categories:
-            if category["amount"] <= 0:
-                continue
+    for category in categories:
+        if category["amount"] <= 0:
+            continue
 
-            await connection.execute(
+        statements.append(
+            (
                 """
                 INSERT INTO monthly_allocations (
                     month,
                     category_id,
-                    debt_id,
                     amount,
-                    source
+                    savings_amount,
+                    source,
+                    allocation_date
                 )
-                VALUES (?, ?, NULL, ?, ?)
+                VALUES (?, ?, ?, 0, ?, ?)
                 """,
                 (
                     month,
                     category["category_id"],
                     category["amount"],
                     source,
+                    allocation_date.isoformat(),
                 ),
             )
+        )
 
-        if savings > 0:
-            await connection.execute(
+    if savings > 0:
+        statements.append(
+            (
                 """
                 INSERT INTO monthly_allocations (
                     month,
                     category_id,
-                    debt_id,
                     amount,
-                    source
+                    savings_amount,
+                    source,
+                    allocation_date
                 )
-                VALUES (?, NULL, NULL, ?, 'savings')
+                VALUES (?, NULL, 0, ?, 'savings', ?)
                 """,
                 (
                     month,
                     savings,
+                    allocation_date.isoformat(),
                 ),
             )
+        )
 
-            await connection.execute(
+        statements.append(
+            (
                 """
                 UPDATE savings
                 SET balance = balance + ?
                 WHERE id = 1
                 """,
-                (
-                    savings,
-                ),
+                (savings,),
             )
+        )
 
-        await connection.commit()
+    if statements:
+        await execute_many(statements)
 
 
 async def allocate_income_remainder(
     amount: float,
     allocation_date: date | None = None,
 ):
-    """
-    Распределяет остаток после обязательных
-    платежей.
-
-    Деньги сначала направляются в месячный
-    бюджет жизни 60 000 ₽ пропорционально
-    лимитам категорий.
-
-    После полного заполнения бюджета жизни
-    остаток направляется в копилку до цели
-    23 000 ₽.
-
-    Виртуальное распределение по категориям
-    не уменьшает основной счёт.
-
-    Деньги, направленные в копилку, считаются
-    физически отложенными и уменьшают основной
-    счёт.
-    """
-
     if amount <= 0:
         return {
             "success": True,
@@ -560,9 +464,7 @@ async def allocate_income_remainder(
 
     distribution = distribute_amount(
         amount=amount,
-        category_budgets=budgets[
-            "categories"
-        ],
+        category_budgets=budgets["categories"],
         savings_remaining=budgets[
             "savings_remaining"
         ],
@@ -570,29 +472,19 @@ async def allocate_income_remainder(
 
     await save_allocation(
         month=month,
-        categories=distribution[
-            "categories"
-        ],
-        savings=distribution[
-            "savings"
-        ],
+        categories=distribution["categories"],
+        savings=distribution["savings"],
         source=(
-            f"income_"
-            f"{allocation_date.isoformat()}"
+            f"income_{allocation_date.isoformat()}"
         ),
+        allocation_date=allocation_date,
     )
 
     return {
         "success": True,
         "amount": amount,
         "month": month,
-        "categories": distribution[
-            "categories"
-        ],
-        "savings": distribution[
-            "savings"
-        ],
-        "unallocated": distribution[
-            "unallocated"
-        ],
+        "categories": distribution["categories"],
+        "savings": distribution["savings"],
+        "unallocated": distribution["unallocated"],
     }
