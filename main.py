@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 
 from app.db import init_db
 from app.setup import setup
+from app.handlers import router
 
 
 load_dotenv()
@@ -42,6 +43,8 @@ async def on_shutdown():
 
 
 async def main():
+    dp.include_router(router)
+
     await dp.start_polling(bot)
 
 
