@@ -1,4 +1,9 @@
-from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+)
 
 
 def main_menu() -> ReplyKeyboardMarkup:
@@ -23,4 +28,21 @@ def main_menu() -> ReplyKeyboardMarkup:
         ],
         resize_keyboard=True,
         is_persistent=True,
+    )
+
+
+def confirm_expense_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Да, записать",
+                    callback_data="confirm_expense",
+                ),
+                InlineKeyboardButton(
+                    text="❌ Нет",
+                    callback_data="cancel_expense",
+                ),
+            ]
+        ]
     )
