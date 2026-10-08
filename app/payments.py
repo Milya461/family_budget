@@ -356,6 +356,7 @@ async def get_event(event_id: int):
             SELECT
                 id,
                 event_date,
+                planned_day,
                 planned_income,
                 actual_income,
                 status
@@ -373,9 +374,10 @@ async def get_event(event_id: int):
     return {
         "id": row[0],
         "event_date": row[1],
-        "planned_income": row[2],
-        "actual_income": row[3],
-        "status": row[4],
+        "planned_day": row[2],
+        "planned_income": row[3],
+        "actual_income": row[4],
+        "status": row[5],
     }
 
 
