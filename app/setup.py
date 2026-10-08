@@ -1,5 +1,4 @@
-from app.db import DB_PATH, init_db
-import aiosqlite
+from app.db import execute
 
 
 CATEGORIES = {
@@ -31,64 +30,100 @@ INCOME_PLANS = [
 
 
 async def setup():
-    await init_db()
-
-    async with aiosqlite.connect(DB_PATH) as db:
-
-        for name, limit in CATEGORIES.items():
-            await db.execute(
-                """
-                INSERT OR IGNORE INTO categories
-                (name, monthly_limit)
-                VALUES (?, ?)
-                """,
-                (name, limit),
-            )
-
-        for name, amount in DEBTS.items():
-            await db.execute(
-                """
-                INSERT OR IGNORE INTO debts
-                (name, planned_amount)
-                VALUES (?, ?)
-                """,
-                (name, amount),
-            )
-
-        for day, name, amount in INCOME_PLANS:
-            cursor = await db.execute(
-                """
-                SELECT id
-                FROM income_plans
-                WHERE day_of_month = ?
-                  AND name = ?
-                """,
-                (day, name),
-            )
-
-            existing = await cursor.fetchone()
-
-            if not existing:
-                await db.execute(
-                    """
-                    INSERT INTO income_plans
-                    (day_of_month, name, planned_amount)
-                    VALUES (?, ?, ?)
-                    """,
-                    (day, name, amount),
-                )
-
-        await db.execute(
+    for name, limit in CATEGORIES.items():
+        await execute(
             """
-            INSERT OR IGNORE INTO bot_settings (key, value)
-            VALUES ('monthly_savings_target', '23000')
-            """
+            INSERT OR IGNORE INTO categories (
+                name,
+                monthly_limit,
+                is_active
+            )
+            VALUES (?, ?, 1)
+            """,
+            name,
+            limit,
         )
 
-        await db.commit()
+    for name, amount in DEBTS.items():
+        await execute(
+            """
+            INSERT OR IGNORE INTO debts (
+                name,
+                planned_amount,
+                is_active
+            )
+            VALUES (?, ?, 1)
+            """,
+            name,
+            amount,
+        )
 
+    for day, name, amount in INCOME_PLANS:
+        await execute(
+            """
+            INSERT OR IGNORE INTO income_plans (
+                day_of_month,
+                name,
+                planned_amount,
+                is_active
+            )
+            VALUES (?, ?, ?, 1)
+            """,
+            day,
+            name,
+            amount,
+        )
 
-if __name__ == "__main__":
-    import asyncio
+    await execute(
+        """
+        INSERT OR IGNORE INTO bot_settings (
+            key,
+            value
+        )
+        VALUES (
+            'monthly_savings_target',
+            '23000'
+        )
+        """
+    )
 
-    asyncio.run(setup())
+    await execute(
+        """
+        INSERT OR IGNORE INTO bot_settings (
+            key,
+            value
+        )
+        VALUES (
+            'monthly_life_budget',
+            '60000'
+        )
+        """
+    )
+
+    await execute(
+        """
+        INSERT OR IGNORE INTO bot_settings (
+            key,
+            value
+        )
+        VALUES (
+            'currency',
+            'RUB'
+        )
+        """
+    )
+
+    await execute(
+        """
+        INSERT OR IGNORE INTO savings (
+            id,
+            balance,
+            monthly_target
+        )
+        VALUES (1, 0, 23000)
+        """
+    )
+
+    return {
+        "success": True,
+    }
