@@ -20,17 +20,10 @@ PAYMENT_PLANS = {
 
 
 async def get_planned_payments(day: int):
-    """
-    Возвращает план обязательных платежей на указанную дату.
-    """
     return PAYMENT_PLANS.get(day, [])
 
 
 async def get_income_plan(day: int):
-    """
-    Возвращает плановый доход на указанную дату.
-    Для 30/31 используется последний день месяца.
-    """
     if day == 31:
         day = 30
 
@@ -45,7 +38,6 @@ async def get_income_plan(day: int):
             """,
             (day,),
         )
-
         rows = await cursor.fetchall()
 
     return rows
@@ -55,9 +47,6 @@ async def create_salary_event(
     event_date: str,
     planned_income: float,
 ):
-    """
-    Создаёт событие получения дохода.
-    """
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             """
@@ -68,14 +57,9 @@ async def create_salary_event(
             )
             VALUES (?, ?, 'pending')
             """,
-            (
-                event_date,
-                planned_income,
-            ),
+            (event_date, planned_income),
         )
-
         event_id = cursor.lastrowid
-
         await db.commit()
 
     return event_id
@@ -85,9 +69,6 @@ async def save_actual_income(
     event_id: int,
     actual_income: float,
 ):
-    """
-    Сохраняет фактически полученный доход.
-    """
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             """
@@ -96,12 +77,8 @@ async def save_actual_income(
                 status = 'income_received'
             WHERE id = ?
             """,
-            (
-                actual_income,
-                event_id,
-            ),
+            (actual_income, event_id),
         )
-
         await db.commit()
 
 
@@ -110,13 +87,9 @@ async def create_mandatory_payment(
     payment_name: str,
     planned_amount: float,
 ):
-    """
-    Создаёт обязательный платёж.
-    """
     debt_id = None
 
     async with aiosqlite.connect(DB_PATH) as db:
-
         if payment_name != "Коммунальные услуги":
             cursor = await db.execute(
                 """
@@ -126,7 +99,6 @@ async def create_mandatory_payment(
                 """,
                 (payment_name,),
             )
-
             row = await cursor.fetchone()
 
             if row:
@@ -137,7 +109,6 @@ async def create_mandatory_payment(
             PRAGMA table_info(mandatory_payments)
             """
         )
-
         columns = await cursor.fetchall()
         column_names = [column[1] for column in columns]
 
@@ -173,10 +144,26 @@ async def save_actual_payment(
     payment_id: int,
     actual_amount: float,
 ):
-    """
-    Сохраняет фактически внесённую сумму обязательного платежа.
-    """
     async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """
+            SELECT
+                id,
+                payment_name,
+                planned_amount,
+                actual_amount,
+                status
+            FROM mandatory_payments
+            WHERE id = ?
+            """,
+            (payment_id,),
+        )
+
+        payment = await cursor.fetchone()
+
+        if not payment:
+            return None
+
         await db.execute(
             """
             UPDATE mandatory_payments
@@ -184,19 +171,23 @@ async def save_actual_payment(
                 status = 'paid'
             WHERE id = ?
             """,
-            (
-                actual_amount,
-                payment_id,
-            ),
+            (actual_amount, payment_id),
         )
 
         await db.commit()
 
+    return {
+        "success": True,
+        "payment_id": payment[0],
+        "payment_name": payment[1],
+        "planned_amount": payment[2],
+        "actual_amount": actual_amount,
+        "difference": actual_amount - payment[2],
+        "status": "paid",
+    }
+
 
 async def get_event(event_id: int):
-    """
-    Возвращает информацию о событии дохода.
-    """
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             """
@@ -211,7 +202,6 @@ async def get_event(event_id: int):
             """,
             (event_id,),
         )
-
         row = await cursor.fetchone()
 
     if not row:
@@ -227,9 +217,6 @@ async def get_event(event_id: int):
 
 
 async def get_event_payments(event_id: int):
-    """
-    Возвращает обязательные платежи конкретного события.
-    """
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             """
@@ -245,7 +232,6 @@ async def get_event_payments(event_id: int):
             """,
             (event_id,),
         )
-
         rows = await cursor.fetchall()
 
     return [
@@ -261,10 +247,6 @@ async def get_event_payments(event_id: int):
 
 
 def get_event_day(event_date: date) -> int:
-    """
-    Возвращает день месяца.
-    Для 30/31 учитывается фактический последний день месяца.
-    """
     last_day = calendar.monthrange(
         event_date.year,
         event_date.month,
