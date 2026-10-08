@@ -273,7 +273,7 @@ async def get_monthly_report(
     В отчёте отдельно учитываются:
 
     - все доходы;
-    - обязательные платежи;
+    - фактически оплаченные обязательные платежи;
     - расходы на жизнь;
     - прочие реальные расходы;
     - виртуальное распределение бюджета;
@@ -284,6 +284,10 @@ async def get_monthly_report(
 
     Виртуальное распределение по категориям
     не считается расходом.
+
+    Плановые суммы обязательных платежей
+    не считаются фактическими расходами,
+    пока платёж реально не записан.
     """
 
     if month is None:
@@ -348,11 +352,34 @@ async def get_monthly_report(
                     0
                 )
             FROM operations
-            """,
+            """
         )
 
         all_operations = await cursor.fetchone()
 
+        # Все фактически оплаченные обязательные платежи:
+        # кредиты / машина / ипотека определяются
+        # по debt_id, коммуналка — по описанию операции.
+        cursor = await db.execute(
+            """
+            SELECT
+                COALESCE(SUM(amount), 0)
+            FROM operations
+            WHERE operation_type = 'expense'
+              AND (
+                    debt_id IS NOT NULL
+                    OR description = 'Коммунальные услуги'
+              )
+              AND substr(operation_date, 1, 7) = ?
+            """,
+            (month,),
+        )
+
+        mandatory_expenses_row = (
+            await cursor.fetchone()
+        )
+
+        # Отдельная разбивка обязательных платежей.
         cursor = await db.execute(
             """
             SELECT
@@ -365,8 +392,28 @@ async def get_monthly_report(
             (month,),
         )
 
-        debt_expenses_row = await cursor.fetchone()
+        debt_expenses_row = (
+            await cursor.fetchone()
+        )
 
+        cursor = await db.execute(
+            """
+            SELECT
+                COALESCE(SUM(amount), 0)
+            FROM operations
+            WHERE operation_type = 'expense'
+              AND description = 'Коммунальные услуги'
+              AND substr(operation_date, 1, 7) = ?
+            """,
+            (month,),
+        )
+
+        utilities_expenses_row = (
+            await cursor.fetchone()
+        )
+
+        # Расходы на жизнь — только расходы,
+        # привязанные к месячным категориям.
         cursor = await db.execute(
             """
             SELECT
@@ -379,8 +426,12 @@ async def get_monthly_report(
             (month,),
         )
 
-        life_expenses_row = await cursor.fetchone()
+        life_expenses_row = (
+            await cursor.fetchone()
+        )
 
+        # Прочие реальные расходы:
+        # не категория, не кредит и не коммуналка.
         cursor = await db.execute(
             """
             SELECT
@@ -389,12 +440,18 @@ async def get_monthly_report(
             WHERE operation_type = 'expense'
               AND category_id IS NULL
               AND debt_id IS NULL
+              AND (
+                    description IS NULL
+                    OR description != 'Коммунальные услуги'
+              )
               AND substr(operation_date, 1, 7) = ?
             """,
             (month,),
         )
 
-        other_expenses_row = await cursor.fetchone()
+        other_expenses_row = (
+            await cursor.fetchone()
+        )
 
         cursor = await db.execute(
             """
@@ -452,7 +509,9 @@ async def get_monthly_report(
             """
         )
 
-        life_budget_row = await cursor.fetchone()
+        life_budget_row = (
+            await cursor.fetchone()
+        )
 
         cursor = await db.execute(
             """
@@ -558,9 +617,21 @@ async def get_monthly_report(
         else 0
     )
 
+    mandatory_expenses = (
+        mandatory_expenses_row[0]
+        if mandatory_expenses_row
+        else 0
+    )
+
     debt_expenses = (
         debt_expenses_row[0]
         if debt_expenses_row
+        else 0
+    )
+
+    utilities_expenses = (
+        utilities_expenses_row[0]
+        if utilities_expenses_row
         else 0
     )
 
@@ -621,15 +692,28 @@ async def get_monthly_report(
         0,
     )
 
+    # Реальные деньги на основном счёте.
+    #
+    # Виртуальное распределение по категориям
+    # здесь НЕ вычитается.
+    #
+    # Физические накопления вычитаются,
+    # потому что эти деньги уже отправлены
+    # в копилку.
     main_account = (
         total_income
         - total_expenses
         - savings_balance
     )
 
+    # Деньги сверх ещё не профинансированных
+    # месячных целей.
+    #
+    # Это информационный показатель:
+    # он не является отдельным счётом.
     free_after_targets = (
         main_account
-        - life_remaining
+        - life_remaining_to_allocate
         - savings_remaining
     )
 
@@ -639,7 +723,9 @@ async def get_monthly_report(
         "month_expenses": month_expenses,
         "total_income": total_income,
         "total_expenses": total_expenses,
+        "mandatory_expenses": mandatory_expenses,
         "debt_expenses": debt_expenses,
+        "utilities_expenses": utilities_expenses,
         "life_expenses": life_expenses,
         "other_expenses": other_expenses,
         "category_allocations": category_allocations,
