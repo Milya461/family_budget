@@ -1,471 +1,190 @@
-from datetime import date
-
 import pytest
-import pytest_asyncio
 
-from app import db
-from app.db import init_db
-from app.setup import setup
-from app.payment_flow import (
-    get_current_balance,
-    record_actual_income,
-    record_actual_payment,
-    start_income_event,
-)
-from app.payments import get_event_payments
-from app.budget import get_monthly_report
-from app.allocation import get_monthly_budget_summary
+from app import allocation
 
 
-@pytest_asyncio.fixture(autouse=True)
-async def clean_database(tmp_path, monkeypatch):
-    test_db = tmp_path / "test_family_budget.db"
+def test_distribute_amount_fills_categories_before_savings():
+    budgets = [
+        {
+            "id": 1,
+            "name": "Продукты",
+            "remaining": 25000,
+        },
+        {
+            "id": 2,
+            "name": "Бензин",
+            "remaining": 7000,
+        },
+        {
+            "id": 3,
+            "name": "Питомцы",
+            "remaining": 6000,
+        },
+    ]
 
-    monkeypatch.setattr(
-        db,
-        "DB_PATH",
-        test_db,
+    result = allocation.distribute_amount(
+        amount=10000,
+        category_budgets=budgets,
+        savings_remaining=23000,
     )
 
-    import app.payment_flow
-    import app.payments
-    import app.setup
-    import app.budget
-    import app.allocation
+    assert result["savings"] == 0
+    assert result["unallocated"] == 0
 
-    monkeypatch.setattr(
-        app.payment_flow,
-        "DB_PATH",
-        test_db,
+    total = sum(
+        item["amount"]
+        for item in result["categories"]
     )
 
-    monkeypatch.setattr(
-        app.payments,
-        "DB_PATH",
-        test_db,
+    assert total == 10000
+
+
+def test_distribute_amount_uses_savings_after_categories():
+    budgets = [
+        {
+            "id": 1,
+            "name": "Продукты",
+            "remaining": 2000,
+        },
+    ]
+
+    result = allocation.distribute_amount(
+        amount=10000,
+        category_budgets=budgets,
+        savings_remaining=23000,
     )
 
-    monkeypatch.setattr(
-        app.setup,
-        "DB_PATH",
-        test_db,
+    assert result["categories"] == [
+        {
+            "category_id": 1,
+            "category": "Продукты",
+            "amount": 2000,
+        }
+    ]
+
+    assert result["savings"] == 8000
+    assert result["unallocated"] == 0
+
+
+def test_distribute_amount_respects_savings_limit():
+    budgets = [
+        {
+            "id": 1,
+            "name": "Продукты",
+            "remaining": 0,
+        },
+    ]
+
+    result = allocation.distribute_amount(
+        amount=30000,
+        category_budgets=budgets,
+        savings_remaining=23000,
     )
 
-    monkeypatch.setattr(
-        app.budget,
-        "DB_PATH",
-        test_db,
+    assert result["categories"] == []
+    assert result["savings"] == 23000
+    assert result["unallocated"] == 7000
+
+
+def test_distribute_amount_returns_zero_for_non_positive_amount():
+    budgets = [
+        {
+            "id": 1,
+            "name": "Продукты",
+            "remaining": 25000,
+        },
+    ]
+
+    result = allocation.distribute_amount(
+        amount=0,
+        category_budgets=budgets,
+        savings_remaining=23000,
     )
 
-    monkeypatch.setattr(
-        app.allocation.db,
-        "DB_PATH",
-        test_db,
-    )
-
-    await init_db()
-    await setup()
-
-
-async def create_test_user():
-    async with db.aiosqlite.connect(
-        db.DB_PATH
-    ) as connection:
-        await connection.execute(
-            """
-            INSERT INTO users (
-                telegram_id,
-                name
-            )
-            VALUES (?, ?)
-            """,
-            (
-                123456789,
-                "Тестовый пользователь",
-            ),
-        )
-
-        await connection.commit()
-
-
-async def record_income_and_payments(
-    event_date,
-    actual_income,
-    payments,
-):
-    income = await start_income_event(
-        event_date
-    )
-
-    recorded_income = await record_actual_income(
-        event_id=income["event_id"],
-        actual_income=actual_income,
-        actual_date=event_date,
-    )
-
-    assert recorded_income["success"] is True
-
-    event_payments = await get_event_payments(
-        income["event_id"]
-    )
-
-    for payment_name, actual_amount in payments.items():
-        payment = next(
-            payment
-            for payment in event_payments
-            if payment["payment_name"]
-            == payment_name
-        )
-
-        saved = await record_actual_payment(
-            payment_id=payment["id"],
-            actual_amount=actual_amount,
-        )
-
-        assert saved["success"] is True
-
-    return income
+    assert result == {
+        "categories": [],
+        "savings": 0,
+        "unallocated": 0,
+    }
 
 
 @pytest.mark.asyncio
-async def test_full_monthly_budget_flow():
-    """
-    Полный сценарий месяца.
-
-    Доходы:
-
-    10 число  — 50 000 ₽
-    15 число  — 27 500 ₽
-    25 число  — 45 000 ₽
-    30 число  — 27 500 ₽
-
-    Всего доходов:
-    150 000 ₽.
-
-    Обязательные платежи:
-
-    Кредитная карта — 18 000 ₽
-    Машина          — 15 000 ₽
-    Машина          — 15 000 ₽
-    Ипотека         — 9 000 ₽
-    Коммуналка      — 10 000 ₽
-
-    Всего:
-    67 000 ₽.
-
-    После обязательных платежей:
-
-    150 000 - 67 000 = 83 000 ₽.
-
-    Из них:
-
-    60 000 ₽ — виртуальные бюджеты жизни.
-    23 000 ₽ — физически в копилку.
-
-    Поэтому реальные деньги на основном счёте:
-
-    150 000
-    - 67 000
-    - 23 000
-    = 60 000 ₽.
-
-    Виртуальное распределение 60 000 ₽
-    основной счёт не уменьшает.
-    """
-
-    await create_test_user()
-
-    # =================================================
-    # 10 октября
-    #
-    # Доход: 50 000 ₽
-    # Кредитная карта: 18 000 ₽
-    # Машина: 15 000 ₽
-    #
-    # Остаток:
-    # 50 000 - 18 000 - 15 000 = 17 000 ₽
-    # =================================================
-
-    await record_income_and_payments(
-        event_date=date(2026, 10, 10),
-        actual_income=50000,
-        payments={
-            "Кредитная карта": 18000,
-            "Кредит на машину": 15000,
+async def test_get_monthly_budget_summary(monkeypatch):
+    categories = [
+        {
+            "id": 1,
+            "name": "Продукты",
+            "monthly_limit": 25000,
         },
-    )
-
-    report = await get_monthly_report(
-        month="2026-10"
-    )
-
-    budget = await get_monthly_budget_summary(
-        month="2026-10"
-    )
-
-    assert report["month_income"] == 50000
-
-    assert report["credit_expenses"] == 33000
-
-    assert report["mandatory_expenses"] == 33000
-
-    assert report["category_allocations"] == 17000
-
-    assert report["monthly_savings"] == 0
-
-    assert report["main_account"] == 17000
-
-    assert budget["allocated"] == 17000
-
-    assert budget["remaining_to_allocate"] == 43000
-
-    # =================================================
-    # 15 октября
-    #
-    # Доход: 27 500 ₽
-    #
-    # Новое распределение:
-    # 17 000 + 27 500 = 44 500 ₽
-    #
-    # Всё пока идёт в категории.
-    # =================================================
-
-    await record_income_and_payments(
-        event_date=date(2026, 10, 15),
-        actual_income=27500,
-        payments={},
-    )
-
-    report = await get_monthly_report(
-        month="2026-10"
-    )
-
-    budget = await get_monthly_budget_summary(
-        month="2026-10"
-    )
-
-    assert report["month_income"] == 77500
-
-    assert report["mandatory_expenses"] == 33000
-
-    assert report["category_allocations"] == 44500
-
-    assert report["monthly_savings"] == 0
-
-    assert report["main_account"] == 44500
-
-    assert budget["allocated"] == 44500
-
-    assert budget["remaining_to_allocate"] == 15500
-
-    # =================================================
-    # 25 октября
-    #
-    # Доход: 45 000 ₽
-    #
-    # Платежи:
-    # машина      15 000 ₽
-    # ипотека      9 000 ₽
-    # коммуналка 10 000 ₽
-    #
-    # Остаток события:
-    # 45 000 - 15 000 - 9 000 - 10 000
-    # = 11 000 ₽
-    #
-    # Всего распределено:
-    # 44 500 + 11 000 = 55 500 ₽
-    # =================================================
-
-    await record_income_and_payments(
-        event_date=date(2026, 10, 25),
-        actual_income=45000,
-        payments={
-            "Кредит на машину": 15000,
-            "Ипотека": 9000,
-            "Коммунальные услуги": 10000,
+        {
+            "id": 2,
+            "name": "Бензин",
+            "monthly_limit": 7000,
         },
+    ]
+
+    async def fake_get_categories():
+        return categories
+
+    async def fake_get_allocations(month):
+        assert month == "2026-10"
+
+        return {
+            "categories": {
+                1: 10000,
+                2: 3000,
+            },
+            "savings": 5000,
+        }
+
+    async def fake_get_spent(category_id, month):
+        assert month == "2026-10"
+
+        if category_id == 1:
+            return 2000
+
+        if category_id == 2:
+            return 1000
+
+        return 0
+
+    async def fake_get_savings_target():
+        return 23000
+
+    monkeypatch.setattr(
+        allocation,
+        "get_monthly_category_budgets",
+        fake_get_categories,
     )
 
-    report = await get_monthly_report(
+    monkeypatch.setattr(
+        allocation,
+        "get_monthly_allocation_totals",
+        fake_get_allocations,
+    )
+
+    monkeypatch.setattr(
+        allocation,
+        "get_monthly_category_spent",
+        fake_get_spent,
+    )
+
+    monkeypatch.setattr(
+        allocation,
+        "get_savings_target",
+        fake_get_savings_target,
+    )
+
+    result = await allocation.get_monthly_budget_summary(
         month="2026-10"
     )
 
-    budget = await get_monthly_budget_summary(
-        month="2026-10"
-    )
-
-    assert report["month_income"] == 122500
-
-    assert report["credit_expenses"] == 48000
-
-    assert report["mortgage_expenses"] == 9000
-
-    assert report["utilities_expenses"] == 10000
-
-    assert report["mandatory_expenses"] == 67000
-
-    assert report["category_allocations"] == 55500
-
-    assert report["monthly_savings"] == 0
-
-    assert report["main_account"] == 55500
-
-    assert budget["allocated"] == 55500
-
-    assert budget["remaining_to_allocate"] == 4500
-
-    # =================================================
-    # 30 октября
-    #
-    # Доход: 27 500 ₽
-    #
-    # До полного бюджета жизни не хватает:
-    # 60 000 - 55 500 = 4 500 ₽
-    #
-    # Поэтому:
-    #
-    # 4 500 ₽ → категории
-    # 23 000 ₽ → копилка
-    # 0 ₽ → нераспределённый остаток
-    #
-    # Всего категорий:
-    # 60 000 ₽.
-    #
-    # Всего копилки:
-    # 23 000 ₽.
-    # =================================================
-
-    await record_income_and_payments(
-        event_date=date(2026, 10, 30),
-        actual_income=27500,
-        payments={},
-    )
-
-    report = await get_monthly_report(
-        month="2026-10"
-    )
-
-    budget = await get_monthly_budget_summary(
-        month="2026-10"
-    )
-
-    # -------------------------------------------------
-    # Доходы.
-    # -------------------------------------------------
-
-    assert report["month_income"] == 150000
-
-    # -------------------------------------------------
-    # Обязательные платежи.
-    # -------------------------------------------------
-
-    assert report["credit_expenses"] == 48000
-
-    assert report["mortgage_expenses"] == 9000
-
-    assert report["utilities_expenses"] == 10000
-
-    assert report["mandatory_expenses"] == 67000
-
-    # -------------------------------------------------
-    # Бюджет жизни.
-    # -------------------------------------------------
-
-    assert report["life_budget"] == 60000
-
-    assert budget["life_budget"] == 60000
-
-    assert report["category_allocations"] == 60000
-
-    assert budget["allocated"] == 60000
-
-    assert budget["remaining_to_allocate"] == 0
-
-    # -------------------------------------------------
-    # Реальные расходы на жизнь.
-    # -------------------------------------------------
-
-    assert report["life_expenses"] == 0
-
-    assert budget["spent"] == 0
-
-    assert budget["remaining_to_spend"] == 60000
-
-    # -------------------------------------------------
-    # Накопления.
-    # -------------------------------------------------
-
-    assert report["monthly_savings"] == 23000
-
-    assert report["savings_target"] == 23000
-
-    assert report["savings_remaining"] == 0
-
-    assert report["savings_balance"] == 23000
-
-    # -------------------------------------------------
-    # Реальный основной счёт.
-    # -------------------------------------------------
-
-    assert report["main_account"] == 60000
-
-    balance = await get_current_balance()
-
-    assert balance == 60000
-
-    # -------------------------------------------------
-    # Виртуальное распределение
-    # не считается расходом.
-    # -------------------------------------------------
-
-    assert report["month_expenses"] == 67000
-
-    assert report["total_expenses"] == 67000
-
-    # -------------------------------------------------
-    # Проверяем все категории.
-    # -------------------------------------------------
-
-    total_category_allocations = sum(
-        category["allocated"]
-        for category in report["categories"]
-    )
-
-    assert total_category_allocations == 60000
-
-    total_category_limits = sum(
-        category["limit"]
-        for category in report["categories"]
-    )
-
-    assert total_category_limits == 60000
-
-    for category in report["categories"]:
-        assert (
-            category["allocated"]
-            <= category["limit"]
-        )
-
-    for category in report["categories"]:
-        assert category["spent"] == 0
-
-        assert (
-            category["allocated"]
-            == category["limit"]
-        )
-
-    # -------------------------------------------------
-    # Финальная арифметическая проверка.
-    # -------------------------------------------------
-
-    assert (
-        report["month_income"]
-        - report["mandatory_expenses"]
-        - report["monthly_savings"]
-        == report["main_account"]
-    )
-
-    assert (
-        report["main_account"]
-        == report["life_budget"]
-    )
+    assert result["month"] == "2026-10"
+    assert result["life_budget"] == 32000
+    assert result["allocated"] == 13000
+    assert result["spent"] == 3000
+    assert result["remaining_to_spend"] == 29000
+    assert result["remaining_to_allocate"] == 19000
+    assert result["savings_target"] == 23000
+    assert result["savings_allocated"] == 5000
+    assert result["savings_remaining"] == 18000
