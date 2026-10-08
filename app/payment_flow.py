@@ -34,7 +34,7 @@ async def start_income_event(
     """
     Создаёт событие планового дохода.
 
-    event_date — дата, к которой привязано событие.
+    event_date — фактическая дата создания события.
     planned_day — плановый день получения дохода.
 
     Если planned_day не указан, используется день event_date.
@@ -218,7 +218,6 @@ async def start_early_income_event(
     план — 10 октября,
     фактически — 8 октября.
 
-    Важный принцип:
     planned_day хранит плановую дату,
     event_date хранит фактическую дату получения.
     """
@@ -291,6 +290,8 @@ async def record_actual_income(
         if payment["status"] != "paid"
     ]
 
+    allocation = None
+
     if not pending_payments:
         from app.allocation import allocate_income_remainder
 
@@ -298,8 +299,6 @@ async def record_actual_income(
             amount=actual_income,
             allocation_date=actual_date,
         )
-    else:
-        allocation = None
 
     return {
         **result,
