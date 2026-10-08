@@ -79,6 +79,7 @@ async def save_actual_income(
             """,
             (actual_income, event_id),
         )
+
         await db.commit()
 
 
@@ -99,6 +100,7 @@ async def create_mandatory_payment(
                 """,
                 (payment_name,),
             )
+
             row = await cursor.fetchone()
 
             if row:
@@ -109,6 +111,7 @@ async def create_mandatory_payment(
             PRAGMA table_info(mandatory_payments)
             """
         )
+
         columns = await cursor.fetchall()
         column_names = [column[1] for column in columns]
 
@@ -149,6 +152,7 @@ async def save_actual_payment(
             """
             SELECT
                 id,
+                salary_event_id,
                 payment_name,
                 planned_amount,
                 actual_amount,
@@ -164,6 +168,12 @@ async def save_actual_payment(
         if not payment:
             return None
 
+        if payment[5] == "paid":
+            return {
+                "success": False,
+                "error": "Этот платёж уже был записан.",
+            }
+
         await db.execute(
             """
             UPDATE mandatory_payments
@@ -174,15 +184,49 @@ async def save_actual_payment(
             (actual_amount, payment_id),
         )
 
+        cursor = await db.execute(
+            """
+            SELECT user_id
+            FROM users
+            ORDER BY id
+            LIMIT 1
+            """
+        )
+
+        user = await cursor.fetchone()
+
+        if user:
+            await db.execute(
+                """
+                INSERT INTO operations (
+                    user_id,
+                    operation_type,
+                    amount,
+                    debt_id,
+                    description,
+                    operation_date
+                )
+                VALUES (?, 'expense', ?, ?, ?, ?)
+                """,
+                (
+                    user[0],
+                    actual_amount,
+                    payment[0] if False else None,
+                    payment[2],
+                    payment[2],
+                    date.today().isoformat(),
+                ),
+            )
+
         await db.commit()
 
     return {
         "success": True,
         "payment_id": payment[0],
-        "payment_name": payment[1],
-        "planned_amount": payment[2],
+        "payment_name": payment[2],
+        "planned_amount": payment[3],
         "actual_amount": actual_amount,
-        "difference": actual_amount - payment[2],
+        "difference": actual_amount - payment[3],
         "status": "paid",
     }
 
@@ -202,6 +246,7 @@ async def get_event(event_id: int):
             """,
             (event_id,),
         )
+
         row = await cursor.fetchone()
 
     if not row:
@@ -232,6 +277,7 @@ async def get_event_payments(event_id: int):
             """,
             (event_id,),
         )
+
         rows = await cursor.fetchall()
 
     return [
