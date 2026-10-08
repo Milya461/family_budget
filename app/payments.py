@@ -412,6 +412,91 @@ async def get_event_payments(event_id: int):
     ]
 
 
+async def get_month_mandatory_payments(
+    month: str,
+):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """
+            SELECT
+                mandatory_payments.id,
+                mandatory_payments.salary_event_id,
+                mandatory_payments.payment_name,
+                mandatory_payments.planned_amount,
+                mandatory_payments.actual_amount,
+                mandatory_payments.status,
+                salary_events.event_date,
+                salary_events.planned_day,
+                salary_events.actual_income
+            FROM mandatory_payments
+            JOIN salary_events
+                ON salary_events.id =
+                   mandatory_payments.salary_event_id
+            WHERE substr(salary_events.event_date, 1, 7) = ?
+            ORDER BY
+                salary_events.event_date,
+                mandatory_payments.id
+            """,
+            (month,),
+        )
+
+        rows = await cursor.fetchall()
+
+    return [
+        {
+            "id": row[0],
+            "salary_event_id": row[1],
+            "payment_name": row[2],
+            "planned_amount": row[3],
+            "actual_amount": row[4],
+            "status": row[5],
+            "event_date": row[6],
+            "planned_day": row[7],
+            "actual_income": row[8],
+        }
+        for row in rows
+    ]
+
+
+async def get_mandatory_payment(
+    payment_id: int,
+):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """
+            SELECT
+                mandatory_payments.id,
+                mandatory_payments.salary_event_id,
+                mandatory_payments.payment_name,
+                mandatory_payments.planned_amount,
+                mandatory_payments.actual_amount,
+                mandatory_payments.status,
+                salary_events.event_date
+            FROM mandatory_payments
+            JOIN salary_events
+                ON salary_events.id =
+                   mandatory_payments.salary_event_id
+            WHERE mandatory_payments.id = ?
+            """,
+            (payment_id,),
+        )
+
+        row = await cursor.fetchone()
+
+    if not row:
+        return None
+
+    return {
+        "id": row[0],
+        "salary_event_id": row[1],
+        "payment_name": row[2],
+        "planned_amount": row[3],
+        "actual_amount": row[4],
+        "status": row[5],
+        "event_date": row[6],
+    }
+
+
 def get_event_day(event_date: date) -> int:
     last_day = calendar.monthrange(
         event_date.year,
