@@ -1,9 +1,12 @@
 from datetime import date
 import calendar
 
-import aiosqlite
-
-from app.db import DB_PATH
+from app.db import (
+    execute,
+    fetch_all,
+    fetch_one,
+    fetch_value,
+)
 
 
 PAYMENT_PLANS = {
@@ -27,47 +30,46 @@ async def get_income_plan(day: int):
     if day == 31:
         day = 30
 
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            """
-            SELECT name, planned_amount
-            FROM income_plans
-            WHERE day_of_month = ?
-              AND is_active = 1
-            ORDER BY id
-            """,
-            (day,),
-        )
-        rows = await cursor.fetchall()
+    rows = await fetch_all(
+        """
+        SELECT
+            name,
+            planned_amount
+        FROM income_plans
+        WHERE day_of_month = ?
+          AND is_active = 1
+        ORDER BY id
+        """,
+        day,
+    )
 
-    return rows
+    return [
+        (
+            row["name"],
+            row["planned_amount"],
+        )
+        for row in rows
+    ]
 
 
 async def create_salary_event(
     event_date: str,
     planned_income: float,
 ):
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            """
-            INSERT INTO salary_events (
-                event_date,
-                planned_income,
-                status
-            )
-            VALUES (?, ?, 'pending')
-            """,
-            (
-                event_date,
-                planned_income,
-            ),
+    result = await execute(
+        """
+        INSERT INTO salary_events (
+            event_date,
+            planned_income,
+            status
         )
+        VALUES (?, ?, 'pending')
+        """,
+        event_date,
+        planned_income,
+    )
 
-        event_id = cursor.lastrowid
-
-        await db.commit()
-
-    return event_id
+    return result.meta.last_row_id
 
 
 async def save_actual_income(
@@ -75,97 +77,86 @@ async def save_actual_income(
     actual_income: float,
     actual_date: date | None = None,
 ):
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            """
-            SELECT
-                event_date,
-                actual_income,
-                status
-            FROM salary_events
-            WHERE id = ?
-            """,
-            (event_id,),
+    event = await fetch_one(
+        """
+        SELECT
+            event_date,
+            actual_income,
+            status
+        FROM salary_events
+        WHERE id = ?
+        """,
+        event_id,
+    )
+
+    if not event:
+        return {
+            "success": False,
+            "error": "Событие дохода не найдено.",
+        }
+
+    if event["status"] == "income_received":
+        return {
+            "success": False,
+            "error": "Этот доход уже был записан.",
+        }
+
+    if actual_date is None:
+        operation_date = event["event_date"]
+    else:
+        operation_date = actual_date.isoformat()
+
+    user_id = await fetch_value(
+        """
+        SELECT id
+        FROM users
+        ORDER BY id
+        LIMIT 1
+        """
+    )
+
+    if user_id is None:
+        return {
+            "success": False,
+            "error": "Пользователь не найден.",
+        }
+
+    description = "Получение дохода"
+
+    if actual_date is not None:
+        description = (
+            "Получение дохода "
+            "(фактическая дата)"
         )
 
-        event = await cursor.fetchone()
+    await execute(
+        """
+        UPDATE salary_events
+        SET actual_income = ?,
+            status = 'income_received',
+            completed_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        actual_income,
+        event_id,
+    )
 
-        if not event:
-            return {
-                "success": False,
-                "error": "Событие дохода не найдено.",
-            }
-
-        if event[2] == "income_received":
-            return {
-                "success": False,
-                "error": "Этот доход уже был записан.",
-            }
-
-        if actual_date is None:
-            operation_date = event[0]
-        else:
-            operation_date = actual_date.isoformat()
-
-        await db.execute(
-            """
-            UPDATE salary_events
-            SET actual_income = ?,
-                status = 'income_received',
-                completed_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            (
-                actual_income,
-                event_id,
-            ),
+    await execute(
+        """
+        INSERT INTO operations (
+            user_id,
+            operation_type,
+            amount,
+            description,
+            operation_date
         )
-
-        cursor = await db.execute(
-            """
-            SELECT id
-            FROM users
-            ORDER BY id
-            LIMIT 1
-            """
-        )
-
-        user = await cursor.fetchone()
-
-        if not user:
-            return {
-                "success": False,
-                "error": "Пользователь не найден.",
-            }
-
-        description = "Получение дохода"
-
-        if actual_date is not None:
-            description = (
-                "Получение дохода "
-                "(фактическая дата)"
-            )
-
-        await db.execute(
-            """
-            INSERT INTO operations (
-                user_id,
-                operation_type,
-                amount,
-                description,
-                operation_date
-            )
-            VALUES (?, 'income', ?, ?, ?)
-            """,
-            (
-                user[0],
-                actual_income,
-                description,
-                operation_date,
-            ),
-        )
-
-        await db.commit()
+        VALUES (?, 'income', ?, ?, ?)
+        """,
+        user_id,
+        actual_income,
+        description,
+        operation_date,
+    )
 
     return {
         "success": True,
@@ -182,231 +173,181 @@ async def create_mandatory_payment(
 ):
     debt_id = None
 
-    async with aiosqlite.connect(DB_PATH) as db:
-        if payment_name != "Коммунальные услуги":
-            cursor = await db.execute(
-                """
-                SELECT id
-                FROM debts
-                WHERE name = ?
-                """,
-                (payment_name,),
-            )
-
-            row = await cursor.fetchone()
-
-            if row:
-                debt_id = row[0]
-
-        cursor = await db.execute(
+    if payment_name != "Коммунальные услуги":
+        debt_id = await fetch_value(
             """
-            PRAGMA table_info(mandatory_payments)
-            """
-        )
-
-        columns = await cursor.fetchall()
-        column_names = [column[1] for column in columns]
-
-        if "payment_name" not in column_names:
-            raise RuntimeError(
-                "В таблице mandatory_payments нет поля payment_name. "
-                "Сначала нужно обновить базу данных."
-            )
-
-        await db.execute(
-            """
-            INSERT INTO mandatory_payments (
-                salary_event_id,
-                payment_name,
-                debt_id,
-                planned_amount,
-                status
-            )
-            VALUES (?, ?, ?, ?, 'pending')
+            SELECT id
+            FROM debts
+            WHERE name = ?
             """,
-            (
-                salary_event_id,
-                payment_name,
-                debt_id,
-                planned_amount,
-            ),
+            payment_name,
         )
 
-        await db.commit()
+    await execute(
+        """
+        INSERT INTO mandatory_payments (
+            salary_event_id,
+            payment_name,
+            debt_id,
+            planned_amount,
+            status
+        )
+        VALUES (?, ?, ?, ?, 'pending')
+        """,
+        salary_event_id,
+        payment_name,
+        debt_id,
+        planned_amount,
+    )
 
 
 async def save_actual_payment(
     payment_id: int,
     actual_amount: float,
 ):
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            """
-            SELECT
-                id,
-                salary_event_id,
-                payment_name,
-                debt_id,
-                planned_amount,
-                actual_amount,
-                status
-            FROM mandatory_payments
-            WHERE id = ?
-            """,
-            (payment_id,),
-        )
+    payment = await fetch_one(
+        """
+        SELECT
+            id,
+            salary_event_id,
+            payment_name,
+            debt_id,
+            planned_amount,
+            actual_amount,
+            status
+        FROM mandatory_payments
+        WHERE id = ?
+        """,
+        payment_id,
+    )
 
-        payment = await cursor.fetchone()
+    if not payment:
+        return None
 
-        if not payment:
-            return None
+    if payment["status"] == "paid":
+        return {
+            "success": False,
+            "error": "Этот платёж уже был записан.",
+        }
 
-        if payment[6] == "paid":
-            return {
-                "success": False,
-                "error": "Этот платёж уже был записан.",
-            }
+    event = await fetch_one(
+        """
+        SELECT
+            event_date
+        FROM salary_events
+        WHERE id = ?
+        """,
+        payment["salary_event_id"],
+    )
 
-        cursor = await db.execute(
-            """
-            SELECT
-                event_date
-            FROM salary_events
-            WHERE id = ?
-            """,
-            (payment[1],),
-        )
-
-        event = await cursor.fetchone()
-
-        if not event:
-            return {
-                "success": False,
-                "error": "Событие дохода для платежа не найдено.",
-            }
-
-        await db.execute(
-            """
-            UPDATE mandatory_payments
-            SET actual_amount = ?,
-                status = 'paid'
-            WHERE id = ?
-            """,
-            (
-                actual_amount,
-                payment_id,
+    if not event:
+        return {
+            "success": False,
+            "error": (
+                "Событие дохода для платежа "
+                "не найдено."
             ),
+        }
+
+    user_id = await fetch_value(
+        """
+        SELECT id
+        FROM users
+        ORDER BY id
+        LIMIT 1
+        """
+    )
+
+    if user_id is None:
+        return {
+            "success": False,
+            "error": "Пользователь не найден.",
+        }
+
+    await execute(
+        """
+        UPDATE mandatory_payments
+        SET actual_amount = ?,
+            status = 'paid'
+        WHERE id = ?
+        """,
+        actual_amount,
+        payment_id,
+    )
+
+    await execute(
+        """
+        INSERT INTO operations (
+            user_id,
+            operation_type,
+            amount,
+            debt_id,
+            description,
+            operation_date
         )
-
-        cursor = await db.execute(
-            """
-            SELECT id
-            FROM users
-            ORDER BY id
-            LIMIT 1
-            """
-        )
-
-        user = await cursor.fetchone()
-
-        if not user:
-            return {
-                "success": False,
-                "error": "Пользователь не найден.",
-            }
-
-        await db.execute(
-            """
-            INSERT INTO operations (
-                user_id,
-                operation_type,
-                amount,
-                debt_id,
-                description,
-                operation_date
-            )
-            VALUES (?, 'expense', ?, ?, ?, ?)
-            """,
-            (
-                user[0],
-                actual_amount,
-                payment[3],
-                payment[2],
-                event[0],
-            ),
-        )
-
-        await db.commit()
+        VALUES (?, 'expense', ?, ?, ?, ?)
+        """,
+        user_id,
+        actual_amount,
+        payment["debt_id"],
+        payment["payment_name"],
+        event["event_date"],
+    )
 
     return {
         "success": True,
-        "payment_id": payment[0],
-        "payment_name": payment[2],
-        "planned_amount": payment[4],
+        "payment_id": payment["id"],
+        "payment_name": payment["payment_name"],
+        "planned_amount": payment["planned_amount"],
         "actual_amount": actual_amount,
-        "difference": actual_amount - payment[4],
+        "difference": (
+            actual_amount
+            - payment["planned_amount"]
+        ),
         "status": "paid",
     }
 
 
 async def get_event(event_id: int):
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            """
-            SELECT
-                id,
-                event_date,
-                planned_day,
-                planned_income,
-                actual_income,
-                status
-            FROM salary_events
-            WHERE id = ?
-            """,
-            (event_id,),
-        )
-
-        row = await cursor.fetchone()
-
-    if not row:
-        return None
-
-    return {
-        "id": row[0],
-        "event_date": row[1],
-        "planned_day": row[2],
-        "planned_income": row[3],
-        "actual_income": row[4],
-        "status": row[5],
-    }
+    return await fetch_one(
+        """
+        SELECT
+            id,
+            event_date,
+            planned_day,
+            planned_income,
+            actual_income,
+            status
+        FROM salary_events
+        WHERE id = ?
+        """,
+        event_id,
+    )
 
 
 async def get_event_payments(event_id: int):
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            """
-            SELECT
-                id,
-                payment_name,
-                planned_amount,
-                actual_amount,
-                status
-            FROM mandatory_payments
-            WHERE salary_event_id = ?
-            ORDER BY id
-            """,
-            (event_id,),
-        )
-
-        rows = await cursor.fetchall()
+    rows = await fetch_all(
+        """
+        SELECT
+            id,
+            payment_name,
+            planned_amount,
+            actual_amount,
+            status
+        FROM mandatory_payments
+        WHERE salary_event_id = ?
+        ORDER BY id
+        """,
+        event_id,
+    )
 
     return [
         {
-            "id": row[0],
-            "payment_name": row[1],
-            "planned_amount": row[2],
-            "actual_amount": row[3],
-            "status": row[4],
+            "id": row["id"],
+            "payment_name": row["payment_name"],
+            "planned_amount": row["planned_amount"],
+            "actual_amount": row["actual_amount"],
+            "status": row["status"],
         }
         for row in rows
     ]
@@ -415,44 +356,41 @@ async def get_event_payments(event_id: int):
 async def get_month_mandatory_payments(
     month: str,
 ):
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            """
-            SELECT
-                mandatory_payments.id,
-                mandatory_payments.salary_event_id,
-                mandatory_payments.payment_name,
-                mandatory_payments.planned_amount,
-                mandatory_payments.actual_amount,
-                mandatory_payments.status,
-                salary_events.event_date,
-                salary_events.planned_day,
-                salary_events.actual_income
-            FROM mandatory_payments
-            JOIN salary_events
-                ON salary_events.id =
-                   mandatory_payments.salary_event_id
-            WHERE substr(salary_events.event_date, 1, 7) = ?
-            ORDER BY
-                salary_events.event_date,
-                mandatory_payments.id
-            """,
-            (month,),
-        )
-
-        rows = await cursor.fetchall()
+    rows = await fetch_all(
+        """
+        SELECT
+            mandatory_payments.id,
+            mandatory_payments.salary_event_id,
+            mandatory_payments.payment_name,
+            mandatory_payments.planned_amount,
+            mandatory_payments.actual_amount,
+            mandatory_payments.status,
+            salary_events.event_date,
+            salary_events.planned_day,
+            salary_events.actual_income
+        FROM mandatory_payments
+        JOIN salary_events
+            ON salary_events.id =
+               mandatory_payments.salary_event_id
+        WHERE substr(salary_events.event_date, 1, 7) = ?
+        ORDER BY
+            salary_events.event_date,
+            mandatory_payments.id
+        """,
+        month,
+    )
 
     return [
         {
-            "id": row[0],
-            "salary_event_id": row[1],
-            "payment_name": row[2],
-            "planned_amount": row[3],
-            "actual_amount": row[4],
-            "status": row[5],
-            "event_date": row[6],
-            "planned_day": row[7],
-            "actual_income": row[8],
+            "id": row["id"],
+            "salary_event_id": row["salary_event_id"],
+            "payment_name": row["payment_name"],
+            "planned_amount": row["planned_amount"],
+            "actual_amount": row["actual_amount"],
+            "status": row["status"],
+            "event_date": row["event_date"],
+            "planned_day": row["planned_day"],
+            "actual_income": row["actual_income"],
         }
         for row in rows
     ]
@@ -461,39 +399,36 @@ async def get_month_mandatory_payments(
 async def get_mandatory_payment(
     payment_id: int,
 ):
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            """
-            SELECT
-                mandatory_payments.id,
-                mandatory_payments.salary_event_id,
-                mandatory_payments.payment_name,
-                mandatory_payments.planned_amount,
-                mandatory_payments.actual_amount,
-                mandatory_payments.status,
-                salary_events.event_date
-            FROM mandatory_payments
-            JOIN salary_events
-                ON salary_events.id =
-                   mandatory_payments.salary_event_id
-            WHERE mandatory_payments.id = ?
-            """,
-            (payment_id,),
-        )
-
-        row = await cursor.fetchone()
+    row = await fetch_one(
+        """
+        SELECT
+            mandatory_payments.id,
+            mandatory_payments.salary_event_id,
+            mandatory_payments.payment_name,
+            mandatory_payments.planned_amount,
+            mandatory_payments.actual_amount,
+            mandatory_payments.status,
+            salary_events.event_date
+        FROM mandatory_payments
+        JOIN salary_events
+            ON salary_events.id =
+               mandatory_payments.salary_event_id
+        WHERE mandatory_payments.id = ?
+        """,
+        payment_id,
+    )
 
     if not row:
         return None
 
     return {
-        "id": row[0],
-        "salary_event_id": row[1],
-        "payment_name": row[2],
-        "planned_amount": row[3],
-        "actual_amount": row[4],
-        "status": row[5],
-        "event_date": row[6],
+        "id": row["id"],
+        "salary_event_id": row["salary_event_id"],
+        "payment_name": row["payment_name"],
+        "planned_amount": row["planned_amount"],
+        "actual_amount": row["actual_amount"],
+        "status": row["status"],
+        "event_date": row["event_date"],
     }
 
 
