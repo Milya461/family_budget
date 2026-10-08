@@ -76,6 +76,7 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS salary_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 event_date TEXT NOT NULL,
+                planned_day INTEGER,
                 planned_income REAL NOT NULL DEFAULT 0,
                 actual_income REAL,
                 status TEXT NOT NULL DEFAULT 'pending',
@@ -115,9 +116,6 @@ async def init_db():
             """
         )
 
-        # Миграция существующей базы:
-        # если таблица mandatory_payments была создана
-        # старой версией программы, добавляем payment_name.
         cursor = await db.execute(
             "PRAGMA table_info(mandatory_payments)"
         )
@@ -130,6 +128,21 @@ async def init_db():
                 """
                 ALTER TABLE mandatory_payments
                 ADD COLUMN payment_name TEXT
+                """
+            )
+
+        cursor = await db.execute(
+            "PRAGMA table_info(salary_events)"
+        )
+
+        columns = await cursor.fetchall()
+        column_names = [column[1] for column in columns]
+
+        if "planned_day" not in column_names:
+            await db.execute(
+                """
+                ALTER TABLE salary_events
+                ADD COLUMN planned_day INTEGER
                 """
             )
 
