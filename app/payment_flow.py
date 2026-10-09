@@ -1,4 +1,3 @@
-
 from datetime import date, datetime, timedelta, timezone
 import calendar
 
@@ -267,7 +266,7 @@ async def record_actual_income(
 
     allocation = None
 
-    if not pending_payments:
+    if not payments:
         from app.allocation import (
             allocate_income_remainder
         )
@@ -275,7 +274,27 @@ async def record_actual_income(
         allocation = await allocate_income_remainder(
             amount=actual_income,
             allocation_date=actual_date,
+            allocation_key=f"salary_event:{event_id}",
         )
+
+    elif not pending_payments:
+        summary = await get_event_summary(
+            event_id
+        )
+
+        if summary:
+            from app.allocation import (
+                allocate_income_remainder
+            )
+
+            allocation = await allocate_income_remainder(
+                amount=max(
+                    summary["remaining"],
+                    0,
+                ),
+                allocation_date=actual_date,
+                allocation_key=f"salary_event:{event_id}",
+            )
 
     return {
         **result,
@@ -352,10 +371,14 @@ async def record_actual_payment(
         )
 
         allocation = await allocate_income_remainder(
-            amount=max(summary["remaining"], 0),
+            amount=max(
+                summary["remaining"],
+                0,
+            ),
             allocation_date=date.fromisoformat(
                 summary["event"]["event_date"]
             ),
+            allocation_key=f"salary_event:{event_id}",
         )
 
     return {
