@@ -1,3 +1,4 @@
+
 name = "familu-budget"
 main = "worker.py"
 compatibility_date = "2026-10-08"
@@ -13,3 +14,11 @@ database_id = "b060a66f-8b86-4dee-8e10-9db1de48d2ae"
 
 [triggers]
 crons = ["0 11 * * *"]
+
+[observability]
+enabled = true
+
+[observability.logs]
+enabled = true
+invocation_logs = true
+persist = true
