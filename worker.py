@@ -687,6 +687,14 @@ async def process_callback(bot, callback):
             f"Категория: {state_data['category']}",
         )
 
+        await ask_about_stock_purchase(
+            bot=bot,
+            chat_id=chat_id,
+            result=result,
+            category=state_data["category"],
+            description=state_data.get("description", ""),
+        )
+
         if balance is None:
             await bot.send_message(
                 chat_id,
