@@ -11,8 +11,7 @@ MOSCOW_TIMEZONE = timezone(timedelta(hours=3))
 # Первый известный рабочий день в цикле 2/2.
 WORK_CYCLE_ANCHOR = date(2026, 10, 3)
 
-# Индивидуальное исключение из обычного цикла:
-# после 27 декабря пользователь не работает.
+# После 27 декабря пользователь не работает.
 NON_WORKING_OVERRIDES = {
     date(2026, 12, 28),
     date(2026, 12, 29),
@@ -103,16 +102,20 @@ async def build_income_message(planned_day):
     if event and event["status"] == "income_received":
         return None
 
-    if event:
-        event_id = event["id"]
-        planned_income = event["planned_income"] or 0
-    else:
-        result = await start_income_event(
-            event_date=today,
-            planned_day=planned_day,
-        )
-        event_id = result["event_id"]
-        planned_income = result["planned_income"] or 0
+    # Всегда вызываем start_income_event:
+    # он создаст событие, если его нет, или восстановит
+    # отсутствующие обязательные платежи у существующего события.
+    result = await start_income_event(
+        event_date=(
+            date.fromisoformat(event["event_date"])
+            if event
+            else today
+        ),
+        planned_day=planned_day,
+    )
+
+    event_id = result["event_id"]
+    planned_income = result["planned_income"] or 0
 
     row = await fetch_one(
         """
@@ -134,7 +137,11 @@ async def build_income_message(planned_day):
 
     return {
         "event_id": event_id,
-        "income_name": row["name"] if row else default_names[planned_day],
+        "income_name": (
+            row["name"]
+            if row
+            else default_names[planned_day]
+        ),
         "planned_income": planned_income,
     }
 
