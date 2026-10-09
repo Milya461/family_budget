@@ -58,6 +58,13 @@ CREATE TABLE IF NOT EXISTS monthly_allocations (
     FOREIGN KEY (category_id) REFERENCES categories(id)
 );
 
+CREATE TABLE IF NOT EXISTS allocation_batches (
+    source_key TEXT PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS salary_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     event_date TEXT NOT NULL,
