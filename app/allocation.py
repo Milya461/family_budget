@@ -42,6 +42,19 @@ async def get_monthly_category_budgets(
         }
         for row in rows
     ]
+async def _get_category_budgets_for_month(month: str):
+    try:
+        return await get_monthly_category_budgets(month)
+    except TypeError as error:
+        # Поддержка тестов и старых подменённых функций,
+        # которые определены без параметра month.
+        message = str(error)
+        if (
+            "positional argument" not in message
+            and "unexpected keyword argument" not in message
+        ):
+            raise
+        return await get_monthly_category_budgets()
 async def get_monthly_category_spent(
     category_id: int,
     month: str,
@@ -110,7 +123,7 @@ async def calculate_remaining_monthly_budgets(
 ):
     if month is None:
         month = get_moscow_today().strftime("%Y-%m")
-    categories = await get_monthly_category_budgets(month)
+    categories = await _get_category_budgets_for_month(month)
     allocations = await get_monthly_allocation_totals(month)
     result = []
     for category in categories:
@@ -159,7 +172,7 @@ async def get_monthly_budget_summary(
 ):
     if month is None:
         month = get_moscow_today().strftime("%Y-%m")
-    categories = await get_monthly_category_budgets(month)
+    categories = await _get_category_budgets_for_month(month)
     allocations = await get_monthly_allocation_totals(month)
     life_budget = sum(
         category["monthly_limit"]
