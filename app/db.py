@@ -6,10 +6,7 @@ _d1 = ContextVar("d1", default=None)
 
 
 def configure_d1(database):
-    """
-    Передаёт D1 binding в слой базы данных.
-    Вызывается из worker.py перед обработкой запроса.
-    """
+    """Передаёт D1 binding в слой базы данных."""
     _d1.set(database)
 
 
@@ -25,10 +22,32 @@ def get_d1():
     return database
 
 
-async def fetch_one(
-    query: str,
-    *params,
-):
+def to_python(value):
+    """Преобразует объекты JavaScript из Pyodide в Python."""
+    if value is None:
+        return None
+
+    converter = getattr(value, "to_py", None)
+
+    if callable(converter):
+        try:
+            value = converter()
+        except Exception:
+            pass
+
+    if isinstance(value, dict):
+        return {
+            to_python(key): to_python(item)
+            for key, item in value.items()
+        }
+
+    if isinstance(value, (list, tuple)):
+        return [to_python(item) for item in value]
+
+    return value
+
+
+async def fetch_one(query: str, *params):
     result = await (
         get_d1()
         .prepare(query)
@@ -36,19 +55,18 @@ async def fetch_one(
         .first()
     )
 
-    return result
+    return to_python(result)
 
 
-async def fetch_value(
-    query: str,
-    *params,
-):
+async def fetch_value(query: str, *params):
     result = await (
         get_d1()
         .prepare(query)
         .bind(*params)
         .first()
     )
+
+    result = to_python(result)
 
     if result is None:
         return None
@@ -59,10 +77,7 @@ async def fetch_value(
     return result
 
 
-async def fetch_all(
-    query: str,
-    *params,
-):
+async def fetch_all(query: str, *params):
     result = await (
         get_d1()
         .prepare(query)
@@ -70,13 +85,17 @@ async def fetch_all(
         .all()
     )
 
-    return result.results
+    result = to_python(result)
+
+    if isinstance(result, dict):
+        rows = result.get("results", [])
+    else:
+        rows = getattr(result, "results", [])
+
+    return to_python(rows) or []
 
 
-async def execute(
-    query: str,
-    *params,
-):
+async def execute(query: str, *params):
     return await (
         get_d1()
         .prepare(query)
@@ -85,9 +104,7 @@ async def execute(
     )
 
 
-async def execute_many(
-    statements: list[tuple[str, tuple]],
-):
+async def execute_many(statements: list[tuple[str, tuple]]):
     database = get_d1()
 
     prepared = [
