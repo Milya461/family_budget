@@ -1,4 +1,6 @@
+
 import json
+import re
 import traceback
 from urllib.parse import urlparse
 
@@ -14,7 +16,6 @@ from app.budget import (
 from app.payment_flow import (
     get_current_balance,
     get_moscow_today,
-    start_income_event,
     record_actual_income,
     record_actual_payment,
 )
@@ -24,7 +25,7 @@ from app.payments import (
 )
 from app.allocation import get_monthly_budget_summary
 from app.scheduler import daily_income_check
-from app.parser import parse_operation
+from app.parser import parse_operation, extract_amount
 
 
 CATEGORIES = [
@@ -269,8 +270,14 @@ async def send_start(bot, chat_id):
         chat_id,
         "👋 Привет!\n\n"
         "Это семейный бюджет.\n\n"
-        "Записывай расходы и дополнительные доходы обычным текстом.\n\n"
-        "Также можно пользоваться меню ниже.",
+        "Записывай расходы и доходы обычным текстом.\n\n"
+        "Зарплату и аванс можно записать в любой день:\n"
+        "• 50000 зп\n"
+        "• 27500 аванс\n\n"
+        "Дополнительные доходы тоже можно записывать в любой день:\n"
+        "• 2000 кэшбэк\n"
+        "• мама прислала 5000\n\n"
+        "Обязательные платежи записываются отдельно через меню.",
         main_menu(),
     )
 
@@ -648,14 +655,20 @@ async def process_callback(bot, callback):
 
 
 def is_planned_income_message(text):
-    """Распознаёт зарплату или аванс, введённые обычным сообщением."""
-    import re
-
     normalized = (text or "").lower().replace("ё", "е")
     return re.search(
         r"(?<!\w)(?:зп|зарплат\w*|аванс\w*)(?!\w)",
         normalized,
     ) is not None
+
+
+def planned_income_description(text):
+    normalized = (text or "").lower().replace("ё", "е")
+
+    if re.search(r"(?<!\w)(?:аванс\w*)(?!\w)", normalized):
+        return "Аванс"
+
+    return "Зарплата"
 
 
 async def process_message(bot, message):
@@ -689,8 +702,8 @@ async def process_message(bot, message):
     state, state_data = await get_state(user_id)
     pending_event_id = await get_pending_income(user_id)
 
-    # Ожидаем фактическую сумму зарплаты или аванса.
-    # Пока бот ждёт сумму, не пытаемся распознавать обычные операции.
+    # Совместимость со старым незавершённым вводом дохода.
+    # Новые зарплаты и авансы больше не создают такие события.
     if (
         state != "income_amount"
         and pending_event_id is not None
@@ -742,7 +755,7 @@ async def process_message(bot, message):
                 )
             return
 
-    # Обработка пошагового ввода дохода из меню.
+    # Доход из меню.
     if state == "income_amount":
         try:
             amount = float(
@@ -796,7 +809,7 @@ async def process_message(bot, message):
         )
         return
 
-    # Обработка пошагового ввода расхода из меню.
+    # Расход из меню.
     if state == "expense_amount":
         try:
             amount = float(
@@ -863,7 +876,7 @@ async def process_message(bot, message):
         )
         return
 
-    # Обработка фактической суммы обязательного платежа.
+    # Фактическая сумма обязательного платежа.
     if state == "payment_amount":
         try:
             amount = float(
@@ -981,44 +994,28 @@ async def process_message(bot, message):
         )
         return
 
-    # Зарплата/аванс, введённые обычным текстом.
-    # Дата поступления определяет план обязательных платежей.
+    # Зарплата и аванс — обычные доходы без привязки к датам
+    # и без создания событий обязательных платежей.
     if is_planned_income_message(text):
-        from app.parser import extract_amount
-
         amount = extract_amount(text)
+
         if amount is None or amount <= 0:
             await bot.send_message(
                 chat_id,
-                "Не удалось определить сумму дохода. Пример: 50000 зп",
+                "Не удалось определить сумму дохода.\n\n"
+                "Примеры:\n"
+                "• 50000 зп\n"
+                "• 27500 аванс",
                 main_menu(),
             )
             return
 
-        today = get_moscow_today()
-        planned_day = 30 if today.day == 31 else today.day
+        description = planned_income_description(text)
 
-        if planned_day not in (10, 15, 25, 30):
-            await bot.send_message(
-                chat_id,
-                "Зарплату или аванс нужно записывать в день поступления: "
-                "10, 15, 25 или 30/31 числа. "
-                "Дополнительные доходы, например «2000 кэшбэк», "
-                "можно записывать в любой день.",
-                main_menu(),
-            )
-            return
-
-        event = await start_income_event(
-            event_date=today,
-            planned_day=planned_day,
-        )
-
-        result = await record_actual_income(
-            event_id=event["event_id"],
-            actual_income=amount,
-            actual_date=today,
+        result = await add_income(
             telegram_id=user_id,
+            amount=amount,
+            description=description,
         )
 
         if not result["success"]:
@@ -1034,52 +1031,27 @@ async def process_message(bot, message):
         except Exception:
             balance = None
 
-        response_lines = [
-            "✅ Доход записан.",
-            "",
-            f"💰 Сумма: {money(amount)} ₽",
-            f"📅 Плановый день: {planned_day}-е число",
-        ]
-
-        planned_payments = event.get("payments") or []
-        if planned_payments:
-            response_lines.extend([
-                "",
-                "🏦 Обязательные платежи по этому дню:",
-            ])
-            for payment in planned_payments:
-                response_lines.append(
-                    f"• {payment['name']} — "
-                    f"{money(payment['planned_amount'])} ₽"
-                )
-            response_lines.extend([
-                "",
-                "Платежи пока не отмечены оплаченными. "
-                "Чтобы внести фактически оплаченную сумму, открой "
-                "«🏦 Обязательные платежи».",
-            ])
-        else:
-            response_lines.extend([
-                "",
-                "На этот день обязательных платежей по плану нет.",
-            ])
+        response_text = (
+            "✅ Доход записан.\n\n"
+            f"Тип: {description}\n"
+            f"Сумма: {money(amount)} ₽\n\n"
+            "Обязательные платежи не отмечались "
+            "и не изменялись."
+        )
 
         if balance is not None:
-            response_lines.extend([
-                "",
-                f"💳 Основной счёт: {money(balance)} ₽",
-            ])
+            response_text += (
+                f"\n💳 Основной счёт: {money(balance)} ₽"
+            )
 
         await bot.send_message(
             chat_id,
-            "\n".join(response_lines),
+            response_text,
             main_menu(),
         )
         return
 
-    # Распознавание операций, введённых обычным текстом.
-    # Не перехватываем сообщения, пока пользователь проходит
-    # пошаговый сценарий из меню.
+    # Операции, введённые обычным текстом.
     operation = parse_operation(text)
 
     if operation and operation["type"] == "expense":
@@ -1143,7 +1115,7 @@ async def process_message(bot, message):
             balance = None
 
         response_text = (
-            "✅ Дополнительный доход записан!\n\n"
+            "✅ Доход записан!\n\n"
             f"💰 Сумма: {money(operation['amount'])} ₽\n"
             f"📝 Описание: {operation['description']}"
         )
@@ -1180,7 +1152,9 @@ async def process_message(bot, message):
         "• продукты 599\n"
         "• бензин 2490\n"
         "• корм котам 1800\n"
-        "• кэшбек 250\n"
+        "• 50000 зп\n"
+        "• 27500 аванс\n"
+        "• 2000 кэшбэк\n"
         "• мама прислала 5000\n\n"
         "Или выбери действие в меню.",
         main_menu(),
