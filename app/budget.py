@@ -9,6 +9,7 @@ from app.db import (
 )
 
 from app.allocation import allocate_income_remainder
+from app.rebalancing import ensure_rebalancing_tables
 
 
 MOSCOW_TIMEZONE = timezone(timedelta(hours=3))
@@ -40,17 +41,35 @@ async def get_debt_id(debt_name):
     )
 
 
-async def get_category_limit(category_id):
+async def get_category_limit(category_id, month=None):
+    if month is None:
+        month = get_moscow_today().strftime("%Y-%m")
+
+    await ensure_rebalancing_tables()
+
     value = await fetch_value(
         """
-        SELECT monthly_limit
-        FROM categories
-        WHERE id = ?
+        SELECT COALESCE(
+            (
+                SELECT monthly_limit
+                FROM monthly_category_budgets
+                WHERE category_id = ?
+                  AND month = ?
+            ),
+            (
+                SELECT monthly_limit
+                FROM categories
+                WHERE id = ?
+            ),
+            0
+        )
         """,
+        category_id,
+        month,
         category_id,
     )
 
-    return value or 0
+    return float(value or 0)
 
 
 async def get_category_spent(category_id, month):
@@ -102,7 +121,10 @@ async def check_expense(
             "error": "Категория не найдена.",
         }
 
-    limit = await get_category_limit(category_id)
+    limit = await get_category_limit(
+        category_id,
+        current_month,
+    )
 
     spent = await get_category_spent(
         category_id,
@@ -179,7 +201,10 @@ async def save_expense(
 
     current_month = operation_date[:7]
 
-    limit = await get_category_limit(category_id)
+    limit = await get_category_limit(
+        category_id,
+        current_month,
+    )
 
     spent = await get_category_spent(
         category_id,
@@ -307,6 +332,8 @@ async def get_monthly_report(
 ):
     if month is None:
         month = get_moscow_today().strftime("%Y-%m")
+
+    await ensure_rebalancing_tables()
 
     month_operations = await fetch_one(
         """
@@ -483,12 +510,9 @@ async def get_monthly_report(
     savings_target = 23000
 
     if savings_row:
-        savings_balance = (
-            savings_row.get("balance") or 0
-        )
+        savings_balance = savings_row.get("balance") or 0
         savings_target = (
-            savings_row.get("monthly_target")
-            or 23000
+            savings_row.get("monthly_target") or 23000
         )
 
     life_budget = await fetch_value(
@@ -507,13 +531,21 @@ async def get_monthly_report(
     category_rows = await fetch_all(
         """
         SELECT
-            id,
-            name,
-            monthly_limit
-        FROM categories
-        WHERE is_active = 1
-        ORDER BY id
-        """
+            c.id,
+            c.name,
+            COALESCE(
+                mb.monthly_limit,
+                c.monthly_limit,
+                0
+            ) AS monthly_limit
+        FROM categories c
+        LEFT JOIN monthly_category_budgets mb
+          ON mb.category_id = c.id
+         AND mb.month = ?
+        WHERE c.is_active = 1
+        ORDER BY c.id
+        """,
+        month,
     )
 
     category_report = []
@@ -521,7 +553,7 @@ async def get_monthly_report(
     for row in category_rows:
         category_id = row["id"]
         name = row["name"]
-        limit = row["monthly_limit"] or 0
+        limit = float(row["monthly_limit"] or 0)
 
         spent = await get_category_spent(
             category_id,
@@ -546,10 +578,7 @@ async def get_monthly_report(
                 "limit": limit,
                 "allocated": allocated,
                 "spent": spent,
-                "remaining": max(
-                    limit - spent,
-                    0,
-                ),
+                "remaining": max(limit - spent, 0),
                 "remaining_to_allocate": max(
                     limit - allocated,
                     0,
