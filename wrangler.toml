@@ -1,3 +1,4 @@
+
 name = "familu-budget"
 main = "worker.py"
 compatibility_date = "2026-10-08"
@@ -10,9 +11,6 @@ ENVIRONMENT = "production"
 binding = "DB"
 database_name = "family-budget-db"
 database_id = "b060a66f-8b86-4dee-8e10-9db1de48d2ae"
-
-[triggers]
-crons = ["0 7 * * *"]
 
 [observability]
 enabled = true
