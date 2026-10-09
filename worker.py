@@ -1,4 +1,3 @@
-
 import json
 import traceback
 from urllib.parse import urlparse
@@ -295,25 +294,31 @@ async def send_balances(bot, chat_id):
         f"Всего на месяц: {money(budget['life_budget'])} ₽",
         f"Распределено: {money(budget['allocated'])} ₽",
         f"Реально потрачено: {money(budget['spent'])} ₽",
-        f"Осталось потратить: {money(budget['remaining_to_spend'])} ₽",
+        f"Осталось потратить по бюджету: {money(budget['remaining_to_spend'])} ₽",
         f"Осталось распределить: {money(budget['remaining_to_allocate'])} ₽",
         "",
         "📊 КАТЕГОРИИ",
     ]
 
     for category in report["categories"]:
-        available = max(
-            category["allocated"] - category["spent"],
+        available_to_spend = max(
+            category["limit"] - category["spent"],
+            0,
+        )
+
+        remaining_to_allocate = max(
+            category["limit"] - category["allocated"],
             0,
         )
 
         lines.extend([
             "",
             f"• {category['name']}",
-            f"  Лимит: {money(category['limit'])} ₽",
+            f"  Лимит на месяц: {money(category['limit'])} ₽",
             f"  Распределено: {money(category['allocated'])} ₽",
             f"  Потрачено: {money(category['spent'])} ₽",
-            f"  Доступно: {money(available)} ₽",
+            f"  Осталось потратить по лимиту: {money(available_to_spend)} ₽",
+            f"  Осталось распределить: {money(remaining_to_allocate)} ₽",
         ])
 
     await bot.send_message(
