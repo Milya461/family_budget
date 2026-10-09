@@ -14,6 +14,7 @@ from app.budget import (
 from app.payment_flow import (
     get_current_balance,
     get_moscow_today,
+    start_income_event,
     record_actual_income,
     record_actual_payment,
 )
@@ -646,6 +647,17 @@ async def process_callback(bot, callback):
     await bot.answer_callback(callback_id)
 
 
+def is_planned_income_message(text):
+    """Распознаёт зарплату или аванс, введённые обычным сообщением."""
+    import re
+
+    normalized = (text or "").lower().replace("ё", "е")
+    return re.search(
+        r"(?<!\w)(?:зп|зарплат\w*|аванс\w*)(?!\w)",
+        normalized,
+    ) is not None
+
+
 async def process_message(bot, message):
     chat = message.get("chat") or {}
     user = message.get("from") or {}
@@ -965,6 +977,102 @@ async def process_message(bot, message):
             chat_id,
             "⚙️ Настройки\n\n"
             "Основные параметры бюджета задаются в базе данных.",
+            main_menu(),
+        )
+        return
+
+    # Зарплата/аванс, введённые обычным текстом.
+    # Дата поступления определяет план обязательных платежей.
+    if is_planned_income_message(text):
+        from app.parser import extract_amount
+
+        amount = extract_amount(text)
+        if amount is None or amount <= 0:
+            await bot.send_message(
+                chat_id,
+                "Не удалось определить сумму дохода. Пример: 50000 зп",
+                main_menu(),
+            )
+            return
+
+        today = get_moscow_today()
+        planned_day = 30 if today.day == 31 else today.day
+
+        if planned_day not in (10, 15, 25, 30):
+            await bot.send_message(
+                chat_id,
+                "Зарплату или аванс нужно записывать в день поступления: "
+                "10, 15, 25 или 30/31 числа. "
+                "Дополнительные доходы, например «2000 кэшбэк», "
+                "можно записывать в любой день.",
+                main_menu(),
+            )
+            return
+
+        event = await start_income_event(
+            event_date=today,
+            planned_day=planned_day,
+        )
+
+        result = await record_actual_income(
+            event_id=event["event_id"],
+            actual_income=amount,
+            actual_date=today,
+            telegram_id=user_id,
+        )
+
+        if not result["success"]:
+            await bot.send_message(
+                chat_id,
+                f"❌ {result['error']}",
+                main_menu(),
+            )
+            return
+
+        try:
+            balance = await get_current_balance()
+        except Exception:
+            balance = None
+
+        response_lines = [
+            "✅ Доход записан.",
+            "",
+            f"💰 Сумма: {money(amount)} ₽",
+            f"📅 Плановый день: {planned_day}-е число",
+        ]
+
+        planned_payments = event.get("payments") or []
+        if planned_payments:
+            response_lines.extend([
+                "",
+                "🏦 Обязательные платежи по этому дню:",
+            ])
+            for payment in planned_payments:
+                response_lines.append(
+                    f"• {payment['name']} — "
+                    f"{money(payment['planned_amount'])} ₽"
+                )
+            response_lines.extend([
+                "",
+                "Платежи пока не отмечены оплаченными. "
+                "Чтобы внести фактически оплаченную сумму, открой "
+                "«🏦 Обязательные платежи».",
+            ])
+        else:
+            response_lines.extend([
+                "",
+                "На этот день обязательных платежей по плану нет.",
+            ])
+
+        if balance is not None:
+            response_lines.extend([
+                "",
+                f"💳 Основной счёт: {money(balance)} ₽",
+            ])
+
+        await bot.send_message(
+            chat_id,
+            "\n".join(response_lines),
             main_menu(),
         )
         return
