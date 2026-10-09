@@ -356,10 +356,11 @@ async def send_report(bot, chat_id):
         lines.extend([
             "",
             f"• {category['name']}",
-            f"  Лимит: {money(category['limit'])} ₽",
+            f"  Лимит на месяц: {money(category['limit'])} ₽",
             f"  Распределено: {money(category['allocated'])} ₽",
             f"  Потрачено: {money(category['spent'])} ₽",
-            f"  Осталось: {money(category['remaining'])} ₽",
+            f"  Осталось потратить по лимиту: {money(category['remaining'])} ₽",
+            f"  Осталось распределить: {money(category['remaining_to_allocate'])} ₽",
         ])
 
     lines.extend([
