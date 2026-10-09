@@ -3,9 +3,11 @@ import calendar
 
 from app.db import (
     execute,
+    execute_many,
     fetch_all,
     fetch_one,
     fetch_value,
+    to_python,
 )
 
 
@@ -30,23 +32,16 @@ def get_moscow_today() -> date:
 
 
 def _month_shift(year: int, month: int, shift: int):
-    """Возвращает год и месяц со сдвигом на указанное число месяцев."""
+    """Возвращает год и месяц со сдвигом."""
     index = year * 12 + month - 1 + shift
     return index // 12, index % 12 + 1
 
 
 def _scheduled_date(event_date: str, planned_day: int) -> date:
-    """
-    Определяет плановую дату платежа.
-
-    Использует planned_day, а не только event_date:
-    существующее событие может быть создано немного раньше
-    плановой даты платежа.
-    """
+    """Определяет плановую дату платежа по planned_day."""
     year, month = map(int, event_date[:7].split("-"))
     last_day = calendar.monthrange(year, month)[1]
-    day = min(int(planned_day), last_day)
-
+    day = min(int(planned_day or int(event_date[8:10])), last_day)
     return date(year, month, day)
 
 
@@ -60,9 +55,7 @@ async def get_income_plan(day: int):
 
     rows = await fetch_all(
         """
-        SELECT
-            name,
-            planned_amount
+        SELECT name, planned_amount
         FROM income_plans
         WHERE day_of_month = ?
           AND is_active = 1
@@ -72,10 +65,7 @@ async def get_income_plan(day: int):
     )
 
     return [
-        (
-            row["name"],
-            row["planned_amount"],
-        )
+        (row["name"], row["planned_amount"])
         for row in rows
     ]
 
@@ -156,15 +146,11 @@ async def create_mandatory_payment(
 
 async def ensure_month_mandatory_payments(month: str):
     """
-    Создаёт план обязательных платежей на месяц.
-
-    Не удаляет существующие события или платежи.
-    Повторный вызов не создаёт повторный платёж
-    внутри одного события.
+    Создаёт недостающие плановые платежи.
+    Существующие события и платежи не удаляются.
     """
     year, month_number = map(int, month.split("-"))
     last_day = calendar.monthrange(year, month_number)[1]
-
     result = []
 
     for day in (10, 25):
@@ -194,6 +180,20 @@ async def ensure_month_mandatory_payments(month: str):
                 planned_income=0,
             )
 
+        await execute(
+            """
+            UPDATE salary_events
+            SET planned_day = ?
+            WHERE id = ?
+              AND (
+                  planned_day IS NULL
+                  OR planned_day NOT IN (10, 25)
+              )
+            """,
+            day,
+            event_id,
+        )
+
         for payment_name, planned_amount in (
             await get_planned_payments(day)
         ):
@@ -207,6 +207,7 @@ async def ensure_month_mandatory_payments(month: str):
                 "id": payment_id,
                 "salary_event_id": event_id,
                 "event_date": event_date,
+                "planned_day": day,
                 "payment_name": payment_name,
                 "planned_amount": planned_amount,
             })
@@ -219,16 +220,14 @@ async def get_nearest_unpaid_payment(
     current_date: date | None = None,
 ):
     """
-    Находит ближайший подходящий неоплаченный платёж.
+    Ищет подходящий неоплаченный платёж.
 
-    Кредитная карта: плановая дата 10-го числа.
-    Ипотека и коммунальные услуги: 25-е число.
+    Кредитная карта: ближайшее 10-е число.
+    Ипотека и коммунальные услуги: ближайшее 25-е число.
     Автокредит:
-      - до 10-го числа — платёж на 10-е;
-      - с 10-го по 24-е — платёж на 25-е;
-      - с 25-го числа — платёж на 10-е следующего месяца.
-
-    Сумма платежа здесь не изменяется.
+      до 10-го — платёж на 10-е;
+      с 10-го по 24-е — платёж на 25-е;
+      с 25-го — платёж на 10-е следующего месяца.
     """
     today = current_date or get_moscow_today()
 
@@ -241,35 +240,33 @@ async def get_nearest_unpaid_payment(
         today.month,
         1,
     )
+    next_month_string = f"{next_year:04d}-{next_month:02d}"
 
-    await ensure_month_mandatory_payments(
-        f"{next_year:04d}-{next_month:02d}"
-    )
+    await ensure_month_mandatory_payments(next_month_string)
 
     rows = await fetch_all(
         """
         SELECT
-            mandatory_payments.id,
-            mandatory_payments.salary_event_id,
-            mandatory_payments.payment_name,
-            mandatory_payments.planned_amount,
-            mandatory_payments.actual_amount,
-            mandatory_payments.status,
-            mandatory_payments.debt_id,
-            salary_events.event_date,
-            salary_events.planned_day
-        FROM mandatory_payments
-        JOIN salary_events
-            ON salary_events.id =
-               mandatory_payments.salary_event_id
-        WHERE mandatory_payments.payment_name = ?
-          AND mandatory_payments.status != 'paid'
-          AND substr(salary_events.event_date, 1, 7) IN (?, ?)
-        ORDER BY salary_events.event_date, mandatory_payments.id
+            mp.id,
+            mp.salary_event_id,
+            mp.payment_name,
+            mp.planned_amount,
+            mp.actual_amount,
+            mp.status,
+            mp.debt_id,
+            se.event_date,
+            se.planned_day
+        FROM mandatory_payments AS mp
+        JOIN salary_events AS se
+          ON se.id = mp.salary_event_id
+        WHERE mp.payment_name = ?
+          AND mp.status != 'paid'
+          AND substr(se.event_date, 1, 7) IN (?, ?)
+        ORDER BY se.event_date, mp.id
         """,
         payment_name,
         today.strftime("%Y-%m"),
-        f"{next_year:04d}-{next_month:02d}",
+        next_month_string,
     )
 
     candidates = []
@@ -319,10 +316,7 @@ async def save_actual_income(
 ):
     event = await fetch_one(
         """
-        SELECT
-            event_date,
-            actual_income,
-            status
+        SELECT event_date, actual_income, status
         FROM salary_events
         WHERE id = ?
         """,
@@ -374,7 +368,7 @@ async def save_actual_income(
             "error": "Пользователь не найден.",
         }
 
-    await execute(
+    update_result = await execute(
         """
         UPDATE salary_events
         SET actual_income = ?,
@@ -386,6 +380,18 @@ async def save_actual_income(
         actual_income,
         event_id,
     )
+
+    changes = getattr(
+        getattr(update_result, "meta", None),
+        "changes",
+        None,
+    )
+
+    if changes != 1:
+        return {
+            "success": False,
+            "error": "Не удалось подтвердить запись дохода.",
+        }
 
     await execute(
         """
@@ -418,11 +424,11 @@ async def save_actual_payment(
     telegram_id: int | None = None,
 ):
     """
-    Записывает фактически уплаченный обязательный платёж.
+    Подтверждает обязательный платёж и записывает расход.
 
-    Статус изменяется только для ещё не оплаченного платежа.
-    Если другая обработка уже отметила его оплаченным,
-    повторная операция не добавляется.
+    Изменение статуса и вставка расхода выполняются
+    одним D1 batch. Вставка расхода производится только
+    если предшествующий UPDATE изменил одну строку.
     """
     if actual_amount <= 0:
         return {
@@ -479,56 +485,60 @@ async def save_actual_payment(
             "error": "Пользователь не найден.",
         }
 
-    # Сначала пытаемся пометить платёж оплаченным.
-    # Запрос обновляет только ещё не оплаченные записи.
-    update_result = await execute(
-        """
-        UPDATE mandatory_payments
-        SET actual_amount = ?,
-            status = 'paid'
-        WHERE id = ?
-          AND status != 'paid'
-        """,
-        actual_amount,
-        payment_id,
-    )
+    operation_date = get_moscow_today().isoformat()
 
-    changes = getattr(
-        getattr(update_result, "meta", None),
-        "changes",
-        None,
-    )
+    batch_result = await execute_many([
+        (
+            """
+            UPDATE mandatory_payments
+            SET actual_amount = ?,
+                status = 'paid'
+            WHERE id = ?
+              AND status != 'paid'
+            """,
+            (actual_amount, payment_id),
+        ),
+        (
+            """
+            INSERT INTO operations (
+                user_id,
+                operation_type,
+                amount,
+                debt_id,
+                description,
+                operation_date
+            )
+            SELECT ?, 'expense', ?, ?, ?, ?
+            WHERE changes() = 1
+            """,
+            (
+                user_id,
+                actual_amount,
+                payment["debt_id"],
+                payment["payment_name"],
+                operation_date,
+            ),
+        ),
+    ])
+
+    results = to_python(batch_result)
+
+    try:
+        update_result = results[0]
+        meta = update_result.get("meta", {})
+        changes = meta.get("changes")
+    except (IndexError, AttributeError, TypeError):
+        changes = None
 
     if changes != 1:
         return {
             "success": False,
             "error": (
-                "Не удалось подтвердить запись платежа. "
+                "Платёж не был записан: возможно, он уже оплачен. "
                 "Проверь список обязательных платежей "
                 "перед повторной отправкой."
             ),
         }
-
-    operation_date = get_moscow_today().isoformat()
-
-    await execute(
-        """
-        INSERT INTO operations (
-            user_id,
-            operation_type,
-            amount,
-            debt_id,
-            description,
-            operation_date
-        )
-        VALUES (?, 'expense', ?, ?, ?, ?)
-        """,
-        user_id,
-        actual_amount,
-        payment["debt_id"],
-        payment["payment_name"],
-        operation_date,
-    )
 
     return {
         "success": True,
@@ -595,23 +605,20 @@ async def get_month_mandatory_payments(month: str):
     rows = await fetch_all(
         """
         SELECT
-            mandatory_payments.id,
-            mandatory_payments.salary_event_id,
-            mandatory_payments.payment_name,
-            mandatory_payments.planned_amount,
-            mandatory_payments.actual_amount,
-            mandatory_payments.status,
-            salary_events.event_date,
-            salary_events.planned_day,
-            salary_events.actual_income
-        FROM mandatory_payments
-        JOIN salary_events
-            ON salary_events.id =
-               mandatory_payments.salary_event_id
-        WHERE substr(salary_events.event_date, 1, 7) = ?
-        ORDER BY
-            salary_events.event_date,
-            mandatory_payments.id
+            mp.id,
+            mp.salary_event_id,
+            mp.payment_name,
+            mp.planned_amount,
+            mp.actual_amount,
+            mp.status,
+            se.event_date,
+            se.planned_day,
+            se.actual_income
+        FROM mandatory_payments AS mp
+        JOIN salary_events AS se
+          ON se.id = mp.salary_event_id
+        WHERE substr(se.event_date, 1, 7) = ?
+        ORDER BY se.event_date, mp.id
         """,
         month,
     )
@@ -636,19 +643,18 @@ async def get_mandatory_payment(payment_id: int):
     row = await fetch_one(
         """
         SELECT
-            mandatory_payments.id,
-            mandatory_payments.salary_event_id,
-            mandatory_payments.payment_name,
-            mandatory_payments.planned_amount,
-            mandatory_payments.actual_amount,
-            mandatory_payments.status,
-            salary_events.event_date,
-            salary_events.planned_day
-        FROM mandatory_payments
-        JOIN salary_events
-            ON salary_events.id =
-               mandatory_payments.salary_event_id
-        WHERE mandatory_payments.id = ?
+            mp.id,
+            mp.salary_event_id,
+            mp.payment_name,
+            mp.planned_amount,
+            mp.actual_amount,
+            mp.status,
+            se.event_date,
+            se.planned_day
+        FROM mandatory_payments AS mp
+        JOIN salary_events AS se
+          ON se.id = mp.salary_event_id
+        WHERE mp.id = ?
         """,
         payment_id,
     )
