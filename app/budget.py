@@ -180,7 +180,7 @@ async def save_expense(
 
     operation_date = get_moscow_today().isoformat()
 
-    await execute(
+    insert_result = await execute(
         """
         INSERT INTO operations (
             user_id,
@@ -199,6 +199,15 @@ async def save_expense(
         operation_date,
     )
 
+    insert_result = to_python(insert_result)
+    operation_id = None
+
+    if isinstance(insert_result, dict):
+        meta = insert_result.get("meta") or {}
+
+        if isinstance(meta, dict):
+            operation_id = meta.get("last_row_id")
+
     current_month = operation_date[:7]
 
     limit = await get_category_limit(
@@ -215,6 +224,7 @@ async def save_expense(
 
     return {
         "success": True,
+        "operation_id": operation_id,
         "category": category_name,
         "category_id": category_id,
         "amount": amount,
