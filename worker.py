@@ -23,6 +23,7 @@ from app.payments import (
     get_nearest_unpaid_payment,
 )
 from app.allocation import get_monthly_budget_summary
+from app.rebalancing import mark_stock_purchase
 from app.scheduler import daily_income_check
 from app.parser import parse_operation, extract_amount
 
