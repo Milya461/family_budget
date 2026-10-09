@@ -1,3 +1,4 @@
+
 from datetime import date
 import calendar
 
@@ -54,22 +55,142 @@ async def get_income_plan(day: int):
 
 async def create_salary_event(
     event_date: str,
-    planned_income: float,
+    planned_income: float = 0,
 ):
     result = await execute(
         """
         INSERT INTO salary_events (
             event_date,
+            planned_day,
             planned_income,
             status
         )
-        VALUES (?, ?, 'pending')
+        VALUES (?, ?, ?, 'pending')
         """,
         event_date,
+        int(event_date[8:10]),
         planned_income,
     )
 
     return result.meta.last_row_id
+
+
+async def create_mandatory_payment(
+    salary_event_id: int,
+    payment_name: str,
+    planned_amount: float,
+):
+    existing = await fetch_one(
+        """
+        SELECT id
+        FROM mandatory_payments
+        WHERE salary_event_id = ?
+          AND payment_name = ?
+        LIMIT 1
+        """,
+        salary_event_id,
+        payment_name,
+    )
+
+    if existing:
+        return existing["id"]
+
+    debt_id = None
+
+    if payment_name != "Коммунальные услуги":
+        debt_id = await fetch_value(
+            """
+            SELECT id
+            FROM debts
+            WHERE name = ?
+            """,
+            payment_name,
+        )
+
+    result = await execute(
+        """
+        INSERT INTO mandatory_payments (
+            salary_event_id,
+            payment_name,
+            debt_id,
+            planned_amount,
+            status
+        )
+        VALUES (?, ?, ?, ?, 'pending')
+        """,
+        salary_event_id,
+        payment_name,
+        debt_id,
+        planned_amount,
+    )
+
+    return result.meta.last_row_id
+
+
+async def ensure_month_mandatory_payments(
+    month: str,
+):
+    """
+    Создаёт план обязательных платежей на месяц
+    независимо от поступления зарплаты или аванса.
+
+    Существующие события и платежи не удаляются.
+    Повторный вызов не создаёт одинаковые платежи
+    внутри одного события.
+    """
+    year, month_number = map(int, month.split("-"))
+    last_day = calendar.monthrange(
+        year,
+        month_number,
+    )[1]
+
+    result = []
+
+    for day in (10, 25):
+        actual_day = min(day, last_day)
+        event_date = date(
+            year,
+            month_number,
+            actual_day,
+        ).isoformat()
+
+        event = await fetch_one(
+            """
+            SELECT id
+            FROM salary_events
+            WHERE event_date = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            event_date,
+        )
+
+        if event:
+            event_id = event["id"]
+        else:
+            event_id = await create_salary_event(
+                event_date=event_date,
+                planned_income=0,
+            )
+
+        for payment_name, planned_amount in (
+            await get_planned_payments(day)
+        ):
+            payment_id = await create_mandatory_payment(
+                salary_event_id=event_id,
+                payment_name=payment_name,
+                planned_amount=planned_amount,
+            )
+
+            result.append({
+                "id": payment_id,
+                "salary_event_id": event_id,
+                "event_date": event_date,
+                "payment_name": payment_name,
+                "planned_amount": planned_amount,
+            })
+
+    return result
 
 
 async def save_actual_income(
@@ -108,10 +229,11 @@ async def save_actual_income(
             "error": "Пользователь не определён.",
         }
 
-    if actual_date is None:
-        operation_date = event["event_date"]
-    else:
-        operation_date = actual_date.isoformat()
+    operation_date = (
+        actual_date.isoformat()
+        if actual_date is not None
+        else event["event_date"]
+    )
 
     user_id = await fetch_value(
         """
@@ -127,14 +249,6 @@ async def save_actual_income(
             "success": False,
             "error": "Пользователь не найден.",
         }
-
-    description = "Получение дохода"
-
-    if actual_date is not None:
-        description = (
-            "Получение дохода "
-            "(фактическая дата)"
-        )
 
     await execute(
         """
@@ -161,7 +275,7 @@ async def save_actual_income(
         """,
         user_id,
         actual_income,
-        description,
+        "Получение дохода",
         operation_date,
     )
 
@@ -171,41 +285,6 @@ async def save_actual_income(
         "actual_income": actual_income,
         "actual_date": operation_date,
     }
-
-
-async def create_mandatory_payment(
-    salary_event_id: int,
-    payment_name: str,
-    planned_amount: float,
-):
-    debt_id = None
-
-    if payment_name != "Коммунальные услуги":
-        debt_id = await fetch_value(
-            """
-            SELECT id
-            FROM debts
-            WHERE name = ?
-            """,
-            payment_name,
-        )
-
-    await execute(
-        """
-        INSERT INTO mandatory_payments (
-            salary_event_id,
-            payment_name,
-            debt_id,
-            planned_amount,
-            status
-        )
-        VALUES (?, ?, ?, ?, 'pending')
-        """,
-        salary_event_id,
-        payment_name,
-        debt_id,
-        planned_amount,
-    )
 
 
 async def save_actual_payment(
@@ -230,7 +309,10 @@ async def save_actual_payment(
     )
 
     if not payment:
-        return None
+        return {
+            "success": False,
+            "error": "Обязательный платёж не найден.",
+        }
 
     if payment["status"] == "paid":
         return {
@@ -238,10 +320,15 @@ async def save_actual_payment(
             "error": "Этот платёж уже был записан.",
         }
 
+    if telegram_id is None:
+        return {
+            "success": False,
+            "error": "Пользователь не определён.",
+        }
+
     event = await fetch_one(
         """
-        SELECT
-            event_date
+        SELECT event_date
         FROM salary_events
         WHERE id = ?
         """,
@@ -251,16 +338,7 @@ async def save_actual_payment(
     if not event:
         return {
             "success": False,
-            "error": (
-                "Событие дохода для платежа "
-                "не найдено."
-            ),
-        }
-
-    if telegram_id is None:
-        return {
-            "success": False,
-            "error": "Пользователь не определён.",
+            "error": "Дата обязательного платежа не найдена.",
         }
 
     user_id = await fetch_value(
@@ -284,6 +362,7 @@ async def save_actual_payment(
         SET actual_amount = ?,
             status = 'paid'
         WHERE id = ?
+          AND status != 'paid'
         """,
         actual_amount,
         payment_id,
@@ -305,7 +384,7 @@ async def save_actual_payment(
         actual_amount,
         payment["debt_id"],
         payment["payment_name"],
-        event["event_date"],
+        date.today().isoformat(),
     )
 
     return {
@@ -370,6 +449,8 @@ async def get_event_payments(event_id: int):
 async def get_month_mandatory_payments(
     month: str,
 ):
+    await ensure_month_mandatory_payments(month)
+
     rows = await fetch_all(
         """
         SELECT
