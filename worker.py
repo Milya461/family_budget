@@ -1,14 +1,11 @@
+
 import json
 import traceback
 from urllib.parse import urlparse
 
 from workers import WorkerEntrypoint, Response, fetch
 
-from app.db import (
-    configure_d1,
-    execute,
-    fetch_one,
-)
+from app.db import configure_d1, execute, fetch_one
 from app.budget import (
     add_income,
     check_expense,
@@ -27,6 +24,7 @@ from app.payments import (
 )
 from app.allocation import get_monthly_budget_summary
 from app.scheduler import daily_income_check
+from app.parser import parse_operation
 
 
 CATEGORIES = [
@@ -85,13 +83,13 @@ def cancel_keyboard():
 
 
 def categories_keyboard():
-    buttons = []
-
-    for category in CATEGORIES:
-        buttons.append([{
+    buttons = [
+        [{
             "text": category,
             "callback_data": f"expense_category:{category}",
-        }])
+        }]
+        for category in CATEGORIES
+    ]
 
     buttons.append([{
         "text": "❌ Отмена",
@@ -142,7 +140,12 @@ class TelegramBot:
             payload,
         )
 
-    async def answer_callback(self, callback_id, text=None, show_alert=False):
+    async def answer_callback(
+        self,
+        callback_id,
+        text=None,
+        show_alert=False,
+    ):
         payload = {"callback_query_id": callback_id}
 
         if text:
@@ -157,7 +160,13 @@ class TelegramBot:
             payload,
         )
 
-    async def edit_message(self, chat_id, message_id, text, reply_markup=None):
+    async def edit_message(
+        self,
+        chat_id,
+        message_id,
+        text,
+        reply_markup=None,
+    ):
         payload = {
             "chat_id": chat_id,
             "message_id": message_id,
@@ -260,10 +269,14 @@ async def send_start(bot, chat_id):
         chat_id,
         "👋 Привет!\n\n"
         "Это семейный бюджет.\n\n"
-        "Здесь можно записывать доходы и расходы, "
-        "следить за обязательными платежами, "
-        "бюджетом на жизнь и копилкой.\n\n"
-        "Выбери действие в меню ниже.",
+        "Записывай расходы и дополнительные доходы обычным текстом.\n\n"
+        "Например:\n"
+        "• продукты 599\n"
+        "• бензин 2490\n"
+        "• корм котам 1800\n"
+        "• кэшбек 250\n"
+        "• мама прислала 5000\n\n"
+        "Также можно пользоваться меню ниже.",
         main_menu(),
     )
 
@@ -295,7 +308,10 @@ async def send_balances(bot, chat_id):
     ]
 
     for category in report["categories"]:
-        available = max(category["allocated"] - category["spent"], 0)
+        available = max(
+            category["allocated"] - category["spent"],
+            0,
+        )
 
         lines.extend([
             "",
@@ -306,7 +322,11 @@ async def send_balances(bot, chat_id):
             f"  Доступно: {money(available)} ₽",
         ])
 
-    await bot.send_message(chat_id, "\n".join(lines), main_menu())
+    await bot.send_message(
+        chat_id,
+        "\n".join(lines),
+        main_menu(),
+    )
 
 
 async def send_report(bot, chat_id):
@@ -359,7 +379,11 @@ async def send_report(bot, chat_id):
         f"Основной счёт: {money(report['main_account'])} ₽",
     ])
 
-    await bot.send_message(chat_id, "\n".join(lines), main_menu())
+    await bot.send_message(
+        chat_id,
+        "\n".join(lines),
+        main_menu(),
+    )
 
 
 async def send_mandatory(bot, chat_id):
@@ -388,7 +412,10 @@ async def send_mandatory(bot, chat_id):
             ])
 
         if payment["status"] == "paid":
-            status = f"✅ Оплачено: {money(payment['actual_amount'])} ₽"
+            status = (
+                f"✅ Оплачено: "
+                f"{money(payment['actual_amount'])} ₽"
+            )
         else:
             status = "⏳ Не оплачено"
 
@@ -413,8 +440,15 @@ async def send_mandatory(bot, chat_id):
         "callback_data": "cancel_action",
     }])
 
-    lines.append("Нажми на платёж ниже, чтобы записать фактическую сумму.")
-    await bot.send_message(chat_id, "\n".join(lines), inline(buttons))
+    lines.append(
+        "Нажми на платёж ниже, чтобы записать фактическую сумму."
+    )
+
+    await bot.send_message(
+        chat_id,
+        "\n".join(lines),
+        inline(buttons),
+    )
 
 
 async def process_callback(bot, callback):
@@ -436,9 +470,17 @@ async def process_callback(bot, callback):
         await bot.answer_callback(callback_id, "Отменено")
 
         if message_id:
-            await bot.edit_message(chat_id, message_id, "❌ Действие отменено.")
+            await bot.edit_message(
+                chat_id,
+                message_id,
+                "❌ Действие отменено.",
+            )
 
-        await bot.send_message(chat_id, "Главное меню:", main_menu())
+        await bot.send_message(
+            chat_id,
+            "Главное меню:",
+            main_menu(),
+        )
         return
 
     if data.startswith("expense_category:"):
@@ -467,8 +509,12 @@ async def process_callback(bot, callback):
         await set_state(
             user_id,
             "expense_description",
-            {"amount": amount, "category": category},
+            {
+                "amount": amount,
+                "category": category,
+            },
         )
+
         await bot.answer_callback(callback_id)
         await bot.edit_message(
             chat_id,
@@ -497,6 +543,7 @@ async def process_callback(bot, callback):
             category_name=state_data["category"],
             description=state_data.get("description", ""),
         )
+
         await clear_state(user_id)
 
         if not result["success"]:
@@ -506,7 +553,11 @@ async def process_callback(bot, callback):
                 message_id,
                 f"❌ {result['error']}",
             )
-            await bot.send_message(chat_id, "Главное меню:", main_menu())
+            await bot.send_message(
+                chat_id,
+                "Главное меню:",
+                main_menu(),
+            )
             return
 
         try:
@@ -514,7 +565,11 @@ async def process_callback(bot, callback):
         except Exception:
             balance = None
 
-        await bot.answer_callback(callback_id, "Расход записан!")
+        await bot.answer_callback(
+            callback_id,
+            "Расход записан!",
+        )
+
         await bot.edit_message(
             chat_id,
             message_id,
@@ -524,7 +579,11 @@ async def process_callback(bot, callback):
         )
 
         if balance is None:
-            await bot.send_message(chat_id, "Главное меню:", main_menu())
+            await bot.send_message(
+                chat_id,
+                "Главное меню:",
+                main_menu(),
+            )
         else:
             await bot.send_message(
                 chat_id,
@@ -547,11 +606,19 @@ async def process_callback(bot, callback):
         payment = await get_mandatory_payment(payment_id)
 
         if not payment:
-            await bot.answer_callback(callback_id, "Платёж не найден.", True)
+            await bot.answer_callback(
+                callback_id,
+                "Платёж не найден.",
+                True,
+            )
             return
 
         if payment["status"] == "paid":
-            await bot.answer_callback(callback_id, "Этот платёж уже записан.", True)
+            await bot.answer_callback(
+                callback_id,
+                "Этот платёж уже записан.",
+                True,
+            )
             return
 
         await set_state(
@@ -563,6 +630,7 @@ async def process_callback(bot, callback):
                 "planned": payment["planned_amount"],
             },
         )
+
         await bot.answer_callback(callback_id)
         await bot.edit_message(
             chat_id,
@@ -585,7 +653,7 @@ async def process_message(bot, message):
     user_id = user.get("id")
     text = (message.get("text") or "").strip()
 
-    if chat_id is None or user_id is None:
+    if chat_id is None or user_id is None or not text:
         return
 
     await ensure_user(user_id)
@@ -609,9 +677,16 @@ async def process_message(bot, message):
     state, state_data = await get_state(user_id)
     pending_event_id = await get_pending_income(user_id)
 
-    if state != "income_amount" and pending_event_id is not None and text:
+    # Ожидаем фактическую сумму зарплаты или аванса.
+    # Пока бот ждёт сумму, не пытаемся распознавать обычные операции.
+    if (
+        state != "income_amount"
+        and pending_event_id is not None
+    ):
         try:
-            amount = float(text.replace(" ", "").replace(",", "."))
+            amount = float(
+                text.replace(" ", "").replace(",", ".")
+            )
         except ValueError:
             amount = None
 
@@ -622,6 +697,7 @@ async def process_message(bot, message):
                 actual_date=get_moscow_today(),
                 telegram_id=user_id,
             )
+
             await remove_pending_income(user_id)
             await clear_state(user_id)
 
@@ -631,19 +707,21 @@ async def process_message(bot, message):
                 except Exception:
                     balance = None
 
-                if balance is None:
-                    response_text = (
-                        "✅ Доход записан.\n\n"
-                        f"Фактически: {money(amount)} ₽"
-                    )
-                else:
-                    response_text = (
-                        "✅ Доход записан.\n\n"
-                        f"Фактически: {money(amount)} ₽\n"
-                        f"Основной счёт: {money(balance)} ₽"
+                response_text = (
+                    "✅ Доход записан.\n\n"
+                    f"Фактически: {money(amount)} ₽"
+                )
+
+                if balance is not None:
+                    response_text += (
+                        f"\nОсновной счёт: {money(balance)} ₽"
                     )
 
-                await bot.send_message(chat_id, response_text, main_menu())
+                await bot.send_message(
+                    chat_id,
+                    response_text,
+                    main_menu(),
+                )
             else:
                 await bot.send_message(
                     chat_id,
@@ -652,14 +730,20 @@ async def process_message(bot, message):
                 )
             return
 
+    # Обработка пошагового ввода дохода из меню.
     if state == "income_amount":
         try:
-            amount = float(text.replace(" ", "").replace(",", "."))
+            amount = float(
+                text.replace(" ", "").replace(",", ".")
+            )
         except ValueError:
             amount = 0
 
         if amount <= 0:
-            await bot.send_message(chat_id, "❌ Введи сумму больше нуля.")
+            await bot.send_message(
+                chat_id,
+                "❌ Введи сумму больше нуля.",
+            )
             return
 
         result = await add_income(
@@ -667,6 +751,7 @@ async def process_message(bot, message):
             amount=amount,
             description="Доход",
         )
+
         await clear_state(user_id)
 
         if not result["success"]:
@@ -682,29 +767,45 @@ async def process_message(bot, message):
         except Exception:
             balance = None
 
-        if balance is None:
-            response_text = f"✅ Доход записан.\n\nСумма: {money(amount)} ₽"
-        else:
-            response_text = (
-                "✅ Доход записан.\n\n"
-                f"Сумма: {money(amount)} ₽\n"
-                f"Основной счёт: {money(balance)} ₽"
+        response_text = (
+            "✅ Доход записан.\n\n"
+            f"Сумма: {money(amount)} ₽"
+        )
+
+        if balance is not None:
+            response_text += (
+                f"\nОсновной счёт: {money(balance)} ₽"
             )
 
-        await bot.send_message(chat_id, response_text, main_menu())
+        await bot.send_message(
+            chat_id,
+            response_text,
+            main_menu(),
+        )
         return
 
+    # Обработка пошагового ввода расхода из меню.
     if state == "expense_amount":
         try:
-            amount = float(text.replace(" ", "").replace(",", "."))
+            amount = float(
+                text.replace(" ", "").replace(",", ".")
+            )
         except ValueError:
             amount = 0
 
         if amount <= 0:
-            await bot.send_message(chat_id, "❌ Введи сумму больше нуля.")
+            await bot.send_message(
+                chat_id,
+                "❌ Введи сумму больше нуля.",
+            )
             return
 
-        await set_state(user_id, "expense_category", {"amount": amount})
+        await set_state(
+            user_id,
+            "expense_category",
+            {"amount": amount},
+        )
+
         await bot.send_message(
             chat_id,
             "📂 Выбери категорию расхода:",
@@ -731,34 +832,39 @@ async def process_message(bot, message):
         )
 
         warning = ""
+
         if check.get("exceeded"):
             warning = (
                 "\n\n⚠️ Внимание: расход превышает "
                 "оставшийся лимит категории."
             )
 
-        description_text = description or "без описания"
-
         await bot.send_message(
             chat_id,
             "🧾 Проверь расход:\n\n"
             f"Сумма: {money(state_data['amount'])} ₽\n"
             f"Категория: {state_data['category']}\n"
-            f"Описание: {description_text}"
+            f"Описание: {description or 'без описания'}"
             f"{warning}\n\n"
             "Записать расход?",
             confirm_keyboard(),
         )
         return
 
+    # Обработка фактической суммы обязательного платежа.
     if state == "payment_amount":
         try:
-            amount = float(text.replace(" ", "").replace(",", "."))
+            amount = float(
+                text.replace(" ", "").replace(",", ".")
+            )
         except ValueError:
             amount = 0
 
         if amount <= 0:
-            await bot.send_message(chat_id, "❌ Введи сумму больше нуля.")
+            await bot.send_message(
+                chat_id,
+                "❌ Введи сумму больше нуля.",
+            )
             return
 
         result = await record_actual_payment(
@@ -766,6 +872,7 @@ async def process_message(bot, message):
             actual_amount=amount,
             telegram_id=user_id,
         )
+
         await clear_state(user_id)
 
         if not result["success"]:
@@ -781,23 +888,25 @@ async def process_message(bot, message):
         except Exception:
             balance = None
 
-        if balance is None:
-            response_text = (
-                "✅ Платёж записан.\n\n"
-                f"Платёж: {state_data['payment_name']}\n"
-                f"Фактически: {money(amount)} ₽"
-            )
-        else:
-            response_text = (
-                "✅ Платёж записан.\n\n"
-                f"Платёж: {state_data['payment_name']}\n"
-                f"Фактически: {money(amount)} ₽\n"
-                f"💳 Основной счёт: {money(balance)} ₽"
+        response_text = (
+            "✅ Платёж записан.\n\n"
+            f"Платёж: {state_data['payment_name']}\n"
+            f"Фактически: {money(amount)} ₽"
+        )
+
+        if balance is not None:
+            response_text += (
+                f"\n💳 Основной счёт: {money(balance)} ₽"
             )
 
-        await bot.send_message(chat_id, response_text, main_menu())
+        await bot.send_message(
+            chat_id,
+            response_text,
+            main_menu(),
+        )
         return
 
+    # Команды меню.
     if text == "💰 Добавить доход":
         await set_state(user_id, "income_amount")
         await bot.send_message(
@@ -821,18 +930,25 @@ async def process_message(bot, message):
         await send_mandatory(bot, chat_id)
         return
 
-    if text == "📊 Балансы":
+    if text in ("📊 Балансы", "остаток", "баланс", "балансы"):
         await clear_state(user_id)
         await send_balances(bot, chat_id)
         return
 
-    if text == "📅 Отчёт за месяц":
+    if text in (
+        "📅 Отчёт за месяц",
+        "отчёт",
+        "отчет",
+        "отчёт за месяц",
+        "отчет за месяц",
+    ):
         await clear_state(user_id)
         await send_report(bot, chat_id)
         return
 
     if text == "🐷 Копилка":
         report = await get_monthly_report()
+
         await bot.send_message(
             chat_id,
             "🐷 КОПИЛКА\n\n"
@@ -853,9 +969,112 @@ async def process_message(bot, message):
         )
         return
 
+    # Распознавание операций, введённых обычным текстом.
+    # Не перехватываем сообщения, пока пользователь проходит
+    # пошаговый сценарий из меню.
+    operation = parse_operation(text)
+
+    if operation and operation["type"] == "expense":
+        result = await save_expense(
+            telegram_id=user_id,
+            amount=operation["amount"],
+            category_name=operation["category"],
+            description=operation["description"],
+        )
+
+        if not result["success"]:
+            await bot.send_message(
+                chat_id,
+                f"❌ {result['error']}",
+                main_menu(),
+            )
+            return
+
+        try:
+            balance = await get_current_balance()
+        except Exception:
+            balance = None
+
+        response_text = (
+            "✅ Расход записан!\n\n"
+            f"💸 Сумма: {money(operation['amount'])} ₽\n"
+            f"📂 Категория: {operation['category']}\n"
+            f"📝 Описание: {operation['description'] or 'без описания'}"
+        )
+
+        if balance is not None:
+            response_text += (
+                f"\n\n💳 Основной счёт: {money(balance)} ₽"
+            )
+
+        await bot.send_message(
+            chat_id,
+            response_text,
+            main_menu(),
+        )
+        return
+
+    if operation and operation["type"] == "income":
+        result = await add_income(
+            telegram_id=user_id,
+            amount=operation["amount"],
+            description=operation["description"],
+        )
+
+        if not result["success"]:
+            await bot.send_message(
+                chat_id,
+                f"❌ {result['error']}",
+                main_menu(),
+            )
+            return
+
+        try:
+            balance = await get_current_balance()
+        except Exception:
+            balance = None
+
+        response_text = (
+            "✅ Дополнительный доход записан!\n\n"
+            f"💰 Сумма: {money(operation['amount'])} ₽\n"
+            f"📝 Описание: {operation['description']}"
+        )
+
+        if balance is not None:
+            response_text += (
+                f"\n\n💳 Основной счёт: {money(balance)} ₽"
+            )
+
+        await bot.send_message(
+            chat_id,
+            response_text,
+            main_menu(),
+        )
+        return
+
+    if operation and operation["type"] == "payment":
+        await bot.send_message(
+            chat_id,
+            "🏦 Похоже, это обязательный платёж:\n\n"
+            f"{operation['debt']} — {money(operation['amount'])} ₽\n\n"
+            "Чтобы платёж попал в учёт обязательных платежей, "
+            "открой меню «🏦 Обязательные платежи» и выбери "
+            "соответствующий платёж. Так мы не создадим "
+            "дублирующую запись.",
+            main_menu(),
+        )
+        return
+
     await bot.send_message(
         chat_id,
-        "Не поняла команду. Выбери действие в меню.",
+        "Не удалось определить операцию.\n\n"
+        "Примеры:\n"
+        "• продукты 599\n"
+        "• бензин 2490\n"
+        "• корм котам 1800\n"
+        "• кэшбек 250\n"
+        "• мама прислала 5000\n\n"
+        "Или выбери действие в меню.",
         main_menu(),
     )
 
@@ -939,8 +1158,8 @@ class Default(WorkerEntrypoint):
                             error_chat_id,
                             "⚠️ Ошибка Worker\n\n"
                             f"{error_details}\n\n"
-                            "Попробуй позже. Не повторяй операцию, "
-                            "пока не проверим, сохранилась ли запись.",
+                            "Пока не проверим запись, "
+                            "не отправляй эту операцию повторно.",
                             main_menu(),
                         )
                     except Exception as send_error:
@@ -959,6 +1178,7 @@ class Default(WorkerEntrypoint):
         await ensure_runtime_tables()
 
         token = getattr(env, "BOT_TOKEN", None)
+
         if not token:
             return
 
