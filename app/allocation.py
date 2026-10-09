@@ -1,6 +1,7 @@
 from datetime import date, datetime, timedelta, timezone
 
 from app.db import (
+    execute,
     execute_many,
     fetch_all,
     fetch_value,
@@ -370,8 +371,23 @@ async def save_allocation(
     savings: float,
     source: str,
     allocation_date: date,
+    allocation_key: str,
 ):
-    statements = []
+    # Все записи распределения и отметка о завершении
+    # выполняются одной пачкой запросов D1.
+    # Повторный вызов с тем же ключом не создаёт новые записи.
+    statements = [
+        (
+            """
+            INSERT OR IGNORE INTO allocation_batches (
+                source_key,
+                status
+            )
+            VALUES (?, 'pending')
+            """,
+            (allocation_key,),
+        )
+    ]
 
     for category in categories:
         if category["amount"] <= 0:
@@ -388,7 +404,13 @@ async def save_allocation(
                     source,
                     allocation_date
                 )
-                VALUES (?, ?, ?, 0, ?, ?)
+                SELECT ?, ?, ?, 0, ?, ?
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM allocation_batches
+                    WHERE source_key = ?
+                      AND status = 'pending'
+                )
                 """,
                 (
                     month,
@@ -396,6 +418,7 @@ async def save_allocation(
                     category["amount"],
                     source,
                     allocation_date.isoformat(),
+                    allocation_key,
                 ),
             )
         )
@@ -412,12 +435,19 @@ async def save_allocation(
                     source,
                     allocation_date
                 )
-                VALUES (?, NULL, 0, ?, 'savings', ?)
+                SELECT ?, NULL, 0, ?, 'savings', ?
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM allocation_batches
+                    WHERE source_key = ?
+                      AND status = 'pending'
+                )
                 """,
                 (
                     month,
                     savings,
                     allocation_date.isoformat(),
+                    allocation_key,
                 ),
             )
         )
@@ -428,18 +458,40 @@ async def save_allocation(
                 UPDATE savings
                 SET balance = balance + ?
                 WHERE id = 1
+                  AND EXISTS (
+                      SELECT 1
+                      FROM allocation_batches
+                      WHERE source_key = ?
+                        AND status = 'pending'
+                  )
                 """,
-                (savings,),
+                (
+                    savings,
+                    allocation_key,
+                ),
             )
         )
 
-    if statements:
-        await execute_many(statements)
+    statements.append(
+        (
+            """
+            UPDATE allocation_batches
+            SET status = 'done',
+                completed_at = CURRENT_TIMESTAMP
+            WHERE source_key = ?
+              AND status = 'pending'
+            """,
+            (allocation_key,),
+        )
+    )
+
+    await execute_many(statements)
 
 
 async def allocate_income_remainder(
     amount: float,
     allocation_date: date | None = None,
+    allocation_key: str | None = None,
 ):
     if amount <= 0:
         return {
@@ -448,6 +500,7 @@ async def allocate_income_remainder(
             "categories": [],
             "savings": 0,
             "unallocated": 0,
+            "already_allocated": False,
         }
 
     if allocation_date is None:
@@ -456,6 +509,43 @@ async def allocate_income_remainder(
     month = allocation_date.strftime(
         "%Y-%m"
     )
+
+    if allocation_key is None:
+        allocation_key = (
+            f"manual:{allocation_date.isoformat()}:"
+            f"{amount:.2f}"
+        )
+
+    await execute(
+        """
+        CREATE TABLE IF NOT EXISTS allocation_batches (
+            source_key TEXT PRIMARY KEY,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            completed_at TEXT
+        )
+        """
+    )
+
+    existing = await fetch_value(
+        """
+        SELECT status
+        FROM allocation_batches
+        WHERE source_key = ?
+        """,
+        allocation_key,
+    )
+
+    if existing == "done":
+        return {
+            "success": True,
+            "amount": amount,
+            "month": month,
+            "categories": [],
+            "savings": 0,
+            "unallocated": 0,
+            "already_allocated": True,
+        }
 
     budgets = await calculate_remaining_monthly_budgets(
         month
@@ -473,10 +563,18 @@ async def allocate_income_remainder(
         month=month,
         categories=distribution["categories"],
         savings=distribution["savings"],
-        source=(
-            f"income_{allocation_date.isoformat()}"
-        ),
+        source=allocation_key,
         allocation_date=allocation_date,
+        allocation_key=allocation_key,
+    )
+
+    completed = await fetch_value(
+        """
+        SELECT status
+        FROM allocation_batches
+        WHERE source_key = ?
+        """,
+        allocation_key,
     )
 
     return {
@@ -486,4 +584,6 @@ async def allocate_income_remainder(
         "categories": distribution["categories"],
         "savings": distribution["savings"],
         "unallocated": distribution["unallocated"],
+        "already_allocated": completed == "done"
+        and existing == "done",
     }
