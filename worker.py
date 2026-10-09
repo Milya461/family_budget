@@ -1211,6 +1211,14 @@ async def process_message(bot, message):
             response_text,
             main_menu(),
         )
+
+        await ask_about_stock_purchase(
+            bot=bot,
+            chat_id=chat_id,
+            result=result,
+            category=operation["category"],
+            description=operation["description"],
+        )
         return
 
     if operation and operation["type"] == "income":
