@@ -164,8 +164,6 @@ async def ensure_month_mandatory_payments(month: str):
             actual_day,
         ).isoformat()
 
-        # Сначала ищем событие, уже связанное с нужным
-        # плановым днём в этом месяце.
         event = await fetch_one(
             """
             SELECT id
@@ -185,9 +183,6 @@ async def ensure_month_mandatory_payments(month: str):
         if event:
             event_id = event["id"]
         else:
-            # Совместимость с ранее созданным событием,
-            # у которого planned_day мог быть не заполнен
-            # или отличаться от планового дня.
             event = await fetch_one(
                 """
                 SELECT id, planned_day
@@ -487,10 +482,7 @@ async def save_actual_payment(
     )
 
     if not payment:
-        return {
-            "success": False,
-            "error": "Обязательный платёж не найден.",
-        }
+        return None
 
     if payment["status"] == "paid":
         return {
