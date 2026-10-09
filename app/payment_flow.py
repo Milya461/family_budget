@@ -1,3 +1,4 @@
+
 from datetime import date, datetime, timedelta, timezone
 import calendar
 
@@ -254,61 +255,15 @@ async def record_actual_income(
     if not result["success"]:
         return result
 
-    payments = await get_event_payments(
-        event_id
-    )
-
-    pending_payments = [
-        payment
-        for payment in payments
-        if payment["status"] != "paid"
-    ]
-
-    allocation = None
-
-    if not payments:
-        from app.allocation import (
-            allocate_income_remainder
-        )
-
-        allocation = await allocate_income_remainder(
-            amount=actual_income,
-            allocation_date=actual_date,
-            allocation_key=f"salary_event:{event_id}",
-        )
-
-    elif not pending_payments:
-        summary = await get_event_summary(
-            event_id
-        )
-
-        if summary:
-            from app.allocation import (
-                allocate_income_remainder
-            )
-
-            allocation = await allocate_income_remainder(
-                amount=max(
-                    summary["remaining"],
-                    0,
-                ),
-                allocation_date=actual_date,
-                allocation_key=f"salary_event:{event_id}",
-            )
-
     return {
         **result,
-        "planned_income": event[
-            "planned_income"
-        ],
-        "planned_day": event.get(
-            "planned_day"
-        ),
+        "planned_income": event["planned_income"],
+        "planned_day": event.get("planned_day"),
         "difference": (
             actual_income
             - event["planned_income"]
         ),
-        "allocation": allocation,
+        "allocation": None,
     }
 
 
@@ -358,29 +313,6 @@ async def record_actual_payment(
         event_id
     )
 
-    allocation = None
-
-    if (
-        summary
-        and summary["event"]["actual_income"]
-        is not None
-        and summary["all_payments_paid"]
-    ):
-        from app.allocation import (
-            allocate_income_remainder
-        )
-
-        allocation = await allocate_income_remainder(
-            amount=max(
-                summary["remaining"],
-                0,
-            ),
-            allocation_date=date.fromisoformat(
-                summary["event"]["event_date"]
-            ),
-            allocation_key=f"salary_event:{event_id}",
-        )
-
     return {
         **saved,
         "event_id": event_id,
@@ -389,7 +321,7 @@ async def record_actual_payment(
             if summary
             else None
         ),
-        "allocation": allocation,
+        "allocation": None,
     }
 
 
