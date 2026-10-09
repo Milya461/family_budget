@@ -5,7 +5,10 @@ from app.db import (
     fetch_all,
     fetch_one,
     fetch_value,
+    to_python,
 )
+
+from app.allocation import allocate_income_remainder
 
 
 MOSCOW_TIMEZONE = timezone(timedelta(hours=3))
@@ -221,7 +224,9 @@ async def add_income(
                 ),
             }
 
-        await execute(
+        operation_date = get_moscow_today().isoformat()
+
+        insert_result = await execute(
             """
             INSERT INTO operations (
                 user_id,
@@ -235,13 +240,57 @@ async def add_income(
             user_id,
             amount,
             description,
-            get_moscow_today().isoformat(),
+            operation_date,
         )
 
-        return {
+        insert_result = to_python(insert_result)
+        operation_id = None
+
+        if isinstance(insert_result, dict):
+            meta = insert_result.get("meta") or {}
+
+            if isinstance(meta, dict):
+                operation_id = meta.get("last_row_id")
+
+        result = {
             "success": True,
             "amount": amount,
         }
+
+        if operation_id is None:
+            result["allocation_warning"] = (
+                "Доход записан, но не удалось получить "
+                "идентификатор операции для распределения. "
+                "Повторно вносить доход не нужно."
+            )
+            return result
+
+        try:
+            allocation = await allocate_income_remainder(
+                amount=amount,
+                allocation_date=datetime.fromisoformat(
+                    operation_date
+                ).date(),
+                allocation_key=f"income:{operation_id}",
+            )
+
+            result["allocation"] = allocation
+
+            if not allocation.get("success"):
+                result["allocation_warning"] = allocation.get(
+                    "error",
+                    "Не удалось распределить доход.",
+                )
+
+        except Exception as allocation_error:
+            result["allocation_warning"] = (
+                "Доход записан, но распределение не завершено: "
+                f"{type(allocation_error).__name__}: "
+                f"{allocation_error}. "
+                "Повторно вносить доход не нужно."
+            )
+
+        return result
 
     except Exception as error:
         return {
