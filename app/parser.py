@@ -99,6 +99,9 @@ DEBT_KEYWORDS = {
     "Кредит на машину": [
         "кредит на машину",
         "кредит за машину",
+        "за машину",
+        "за машину кредит",
+        "машину",
         "автокредит",
         "машина кредит",
         "машинный кредит",
@@ -107,6 +110,20 @@ DEBT_KEYWORDS = {
         "ипотека",
         "ипотеку",
         "ипотеке",
+        "квартира",
+        "квартиру",
+        "за квартиру",
+        "ипотечный",
+    ],
+    "Коммунальные услуги": [
+        "коммуналка",
+        "коммунальные услуги",
+        "коммунальные",
+        "жкх",
+        "свет",
+        "вода",
+        "электричество",
+        "за коммуналку",
     ],
 }
 
@@ -140,14 +157,20 @@ INCOME_KEYWORDS = [
 
 def normalize_text(text: str) -> str:
     """Приводит текст к единому формату для распознавания."""
-    return " ".join((text or "").lower().strip().split())
+    return " ".join(
+        (text or "")
+        .lower()
+        .replace("ё", "е")
+        .strip()
+        .split()
+    )
 
 
 def extract_amount(text: str):
     """
     Извлекает денежную сумму из сообщения.
 
-    Поддерживает варианты:
+    Поддерживает:
     599
     2 490
     2490,50
@@ -196,9 +219,10 @@ def extract_amount(text: str):
 def _find_keyword(text: str, keyword: str) -> bool:
     """
     Проверяет наличие ключевого слова.
-    Для коротких слов использует границы слов,
-    чтобы не было лишних совпадений.
+    Короткие слова проверяются по границам слов.
     """
+    keyword = normalize_text(keyword)
+
     if len(keyword) <= 4:
         pattern = rf"(?<!\w){re.escape(keyword)}(?!\w)"
         return re.search(pattern, text) is not None
@@ -219,7 +243,7 @@ def detect_category(text: str):
 
 
 def detect_debt(text: str):
-    """Определяет долг или обязательный платёж."""
+    """Определяет обязательный платёж."""
     normalized = normalize_text(text)
 
     for debt, keywords in DEBT_KEYWORDS.items():
@@ -241,7 +265,7 @@ def detect_income(text: str) -> bool:
 
 
 def remove_amount(text: str) -> str:
-    """Удаляет денежную сумму из текста, сохраняя описание операции."""
+    """Удаляет денежную сумму из текста."""
     if not text:
         return ""
 
@@ -254,29 +278,13 @@ def remove_amount(text: str) -> str:
 
     result = re.sub(pattern, " ", text, count=1)
     result = re.sub(r"\s+", " ", result)
-    result = result.strip(" \t\n\r,.;:-")
 
-    return result
+    return result.strip(" \t\n\r,.;:-")
 
 
 def parse_operation(text: str):
     """
-    Разбирает короткое сообщение пользователя.
-
-    Примеры:
-        продукты 599
-        бензин 2490
-        корм котам 1800
-        кредит на машину 15000
-        ипотека 9000
-        кэшбек 250
-        мама прислала 5000
-
-    Возвращает словарь с типом операции, суммой,
-    категорией или названием платежа и описанием.
-
-    Функция только распознаёт сообщение.
-    Она не записывает операции в базу данных.
+    Разбирает сообщение пользователя без записи в базу данных.
     """
     if not text or not text.strip():
         return None
@@ -289,8 +297,7 @@ def parse_operation(text: str):
     normalized = normalize_text(text)
     description = remove_amount(text)
 
-    # Доходы проверяем первыми, чтобы, например,
-    # «подарили 1000» не записался как расход на подарок.
+    # Сначала проверяем доходы.
     if detect_income(normalized):
         return {
             "type": "income",
@@ -300,8 +307,7 @@ def parse_operation(text: str):
             "description": description or "Дополнительный доход",
         }
 
-    # Обязательные платежи и долги должны распознаваться
-    # отдельно от обычных расходов.
+    # Обязательные платежи проверяем раньше обычных расходов.
     debt = detect_debt(normalized)
 
     if debt:
@@ -324,8 +330,6 @@ def parse_operation(text: str):
             "description": description or category,
         }
 
-    # Если категорию нельзя определить уверенно,
-    # не записываем операцию автоматически.
     return {
         "type": "unknown",
         "amount": amount,
