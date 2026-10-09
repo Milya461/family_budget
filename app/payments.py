@@ -32,13 +32,11 @@ def get_moscow_today() -> date:
 
 
 def _month_shift(year: int, month: int, shift: int):
-    """Возвращает год и месяц со сдвигом."""
     index = year * 12 + month - 1 + shift
     return index // 12, index % 12 + 1
 
 
 def _scheduled_date(event_date: str, planned_day: int) -> date:
-    """Определяет плановую дату платежа по planned_day."""
     year, month = map(int, event_date[:7].split("-"))
     last_day = calendar.monthrange(year, month)[1]
     day = min(int(planned_day or int(event_date[8:10])), last_day)
@@ -146,7 +144,12 @@ async def create_mandatory_payment(
 
 async def ensure_month_mandatory_payments(month: str):
     """
-    Создаёт недостающие плановые платежи.
+    Создаёт недостающие обязательные платежи.
+
+    Сначала ищет событие соответствующего месяца по planned_day.
+    Это позволяет повторно использовать существующее событие,
+    даже если его event_date отличается от плановой даты.
+
     Существующие события и платежи не удаляются.
     """
     year, month_number = map(int, month.split("-"))
@@ -161,38 +164,69 @@ async def ensure_month_mandatory_payments(month: str):
             actual_day,
         ).isoformat()
 
+        # Сначала ищем событие, уже связанное с нужным
+        # плановым днём в этом месяце.
         event = await fetch_one(
             """
             SELECT id
             FROM salary_events
-            WHERE event_date = ?
-            ORDER BY id DESC
+            WHERE substr(event_date, 1, 7) = ?
+              AND planned_day = ?
+            ORDER BY
+                CASE WHEN event_date = ? THEN 0 ELSE 1 END,
+                id DESC
             LIMIT 1
             """,
+            month,
+            day,
             event_date,
         )
 
         if event:
             event_id = event["id"]
         else:
-            event_id = await create_salary_event(
-                event_date=event_date,
-                planned_income=0,
+            # Совместимость с ранее созданным событием,
+            # у которого planned_day мог быть не заполнен
+            # или отличаться от планового дня.
+            event = await fetch_one(
+                """
+                SELECT id, planned_day
+                FROM salary_events
+                WHERE event_date = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                event_date,
             )
 
-        await execute(
-            """
-            UPDATE salary_events
-            SET planned_day = ?
-            WHERE id = ?
-              AND (
-                  planned_day IS NULL
-                  OR planned_day NOT IN (10, 25)
-              )
-            """,
-            day,
-            event_id,
-        )
+            if event:
+                event_id = event["id"]
+
+                if event["planned_day"] != day:
+                    await execute(
+                        """
+                        UPDATE salary_events
+                        SET planned_day = ?
+                        WHERE id = ?
+                        """,
+                        day,
+                        event_id,
+                    )
+            else:
+                event_id = await create_salary_event(
+                    event_date=event_date,
+                    planned_income=0,
+                )
+
+                await execute(
+                    """
+                    UPDATE salary_events
+                    SET planned_day = ?
+                    WHERE id = ?
+                    """,
+                    day,
+                    event_id,
+                )
 
         for payment_name, planned_amount in (
             await get_planned_payments(day)
@@ -220,7 +254,7 @@ async def get_nearest_unpaid_payment(
     current_date: date | None = None,
 ):
     """
-    Ищет подходящий неоплаченный платёж.
+    Ищет ближайший подходящий неоплаченный платёж.
 
     Кредитная карта: ближайшее 10-е число.
     Ипотека и коммунальные услуги: ближайшее 25-е число.
@@ -427,8 +461,8 @@ async def save_actual_payment(
     Подтверждает обязательный платёж и записывает расход.
 
     Изменение статуса и вставка расхода выполняются
-    одним D1 batch. Вставка расхода производится только
-    если предшествующий UPDATE изменил одну строку.
+    одним D1 batch. Расход добавляется только в том случае,
+    если UPDATE изменил одну строку.
     """
     if actual_amount <= 0:
         return {
@@ -534,9 +568,9 @@ async def save_actual_payment(
         return {
             "success": False,
             "error": (
-                "Платёж не был записан: возможно, он уже оплачен. "
-                "Проверь список обязательных платежей "
-                "перед повторной отправкой."
+                "Не удалось подтвердить запись платежа. "
+                "Возможно, он уже оплачен. Проверь список "
+                "обязательных платежей перед повторной отправкой."
             ),
         }
 
@@ -546,9 +580,7 @@ async def save_actual_payment(
         "payment_name": payment["payment_name"],
         "planned_amount": payment["planned_amount"],
         "actual_amount": actual_amount,
-        "difference": (
-            actual_amount - payment["planned_amount"]
-        ),
+        "difference": actual_amount - payment["planned_amount"],
         "status": "paid",
         "operation_date": operation_date,
     }
