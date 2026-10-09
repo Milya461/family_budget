@@ -1,4 +1,3 @@
-
 from datetime import date, datetime, timedelta, timezone
 import calendar
 
@@ -25,9 +24,7 @@ MOSCOW_TIMEZONE = timezone(timedelta(hours=3))
 
 
 def get_moscow_today():
-    return datetime.now(
-        MOSCOW_TIMEZONE
-    ).date()
+    return datetime.now(MOSCOW_TIMEZONE).date()
 
 
 async def start_income_event(
@@ -47,20 +44,10 @@ async def start_income_event(
     )[1]
 
     if planned_day is None:
-        planned_day = (
-            30
-            if day == last_day
-            else day
-        )
+        planned_day = 30 if day == last_day else day
 
-    income_plans = await get_income_plan(
-        planned_day
-    )
-
-    planned_income = sum(
-        amount
-        for _, amount in income_plans
-    )
+    income_plans = await get_income_plan(planned_day)
+    planned_income = sum(amount for _, amount in income_plans)
 
     existing = await fetch_one(
         """
@@ -75,16 +62,11 @@ async def start_income_event(
         planned_day,
     )
 
-    planned_payments = await get_planned_payments(
-        planned_day
-    )
+    planned_payments = await get_planned_payments(planned_day)
 
     if existing:
         event_id = existing["id"]
-
-        existing_payments = await get_event_payments(
-            event_id
-        )
+        existing_payments = await get_event_payments(event_id)
 
         existing_payment_names = {
             payment["payment_name"]
@@ -219,9 +201,7 @@ async def start_early_income_event(
         planned_day=planned_day,
     )
 
-    return await get_event(
-        result["event_id"]
-    )
+    return await get_event(result["event_id"])
 
 
 async def record_actual_income(
@@ -234,7 +214,13 @@ async def record_actual_income(
     Старый сценарий записи дохода через событие.
     Обычный ввод дохода должен использовать add_income.
     """
-    if actual_income <= 0:
+    if actual_income < 0:
+        return {
+            "success": False,
+            "error": "Сумма дохода не может быть отрицательной.",
+        }
+
+    if actual_income == 0:
         return {
             "success": False,
             "error": "Сумма дохода должна быть больше нуля.",
@@ -265,10 +251,7 @@ async def record_actual_income(
         **result,
         "planned_income": event["planned_income"],
         "planned_day": event.get("planned_day"),
-        "difference": (
-            actual_income
-            - event["planned_income"]
-        ),
+        "difference": actual_income - event["planned_income"],
         "allocation": None,
     }
 
@@ -283,7 +266,13 @@ async def record_actual_payment(
     Не связывает его с суммой полученной зарплаты
     и не рассчитывает остаток от события дохода.
     """
-    if actual_amount <= 0:
+    if actual_amount < 0:
+        return {
+            "success": False,
+            "error": "Сумма платежа не может быть отрицательной.",
+        }
+
+    if actual_amount == 0:
         return {
             "success": False,
             "error": "Сумма платежа должна быть больше нуля.",
@@ -295,11 +284,8 @@ async def record_actual_payment(
         telegram_id=telegram_id,
     )
 
-    if not saved:
-        return {
-            "success": False,
-            "error": "Обязательный платёж не найден.",
-        }
+    if saved is None:
+        return None
 
     if not saved.get("success"):
         return saved
@@ -310,9 +296,7 @@ async def record_actual_payment(
     }
 
 
-async def get_payment_event_id(
-    payment_id: int,
-):
+async def get_payment_event_id(payment_id: int):
     """
     Совместимость со старым форматом базы данных:
     обязательные платежи пока имеют ссылку на событие.
@@ -327,9 +311,7 @@ async def get_payment_event_id(
     )
 
 
-async def get_event_summary(
-    event_id: int,
-):
+async def get_event_summary(event_id: int):
     """
     Сводка старого события дохода.
     Не используется для подтверждения оплаты
@@ -340,9 +322,7 @@ async def get_event_summary(
     if not event:
         return None
 
-    payments = await get_event_payments(
-        event_id
-    )
+    payments = await get_event_payments(event_id)
 
     total_planned_payments = sum(
         payment["planned_amount"]
@@ -370,13 +350,9 @@ async def get_event_summary(
         "total_planned_payments": total_planned_payments,
         "total_actual_payments": total_actual_payments,
         "planned_remaining": (
-            event["planned_income"]
-            - total_planned_payments
+            event["planned_income"] - total_planned_payments
         ),
-        "remaining": (
-            actual_income
-            - total_actual_payments
-        ),
+        "remaining": actual_income - total_actual_payments,
         "all_payments_paid": all_payments_paid,
     }
 
