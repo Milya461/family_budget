@@ -115,6 +115,66 @@ def confirm_keyboard():
     ])
 
 
+def stock_purchase_keyboard(operation_id):
+    return inline([
+        [
+            {
+                "text": "1 месяц",
+                "callback_data": f"stock_months:{operation_id}:1",
+            },
+            {
+                "text": "2 месяца",
+                "callback_data": f"stock_months:{operation_id}:2",
+            },
+            {
+                "text": "3 месяца",
+                "callback_data": f"stock_months:{operation_id}:3",
+            },
+        ],
+        [{
+            "text": "Не отмечать",
+            "callback_data": f"stock_skip:{operation_id}",
+        }],
+    ])
+
+
+def is_stock_food_purchase(category, description):
+    if category != "Питомцы":
+        return False
+
+    normalized = (description or "").lower().replace("ё", "е")
+
+    return re.search(
+        r"корм|грандорф|grandorf|jarvi|джарви",
+        normalized,
+    ) is not None
+
+
+async def ask_about_stock_purchase(
+    bot,
+    chat_id,
+    result,
+    category,
+    description,
+):
+    operation_id = result.get("operation_id")
+
+    if (
+        not result.get("success")
+        or operation_id is None
+        or not is_stock_food_purchase(category, description)
+    ):
+        return
+
+    await bot.send_message(
+        chat_id,
+        "🐾 Это покупка корма в запас?\n\n"
+        "Если корма хватит на несколько месяцев, "
+        "выбери срок. Тогда при анализе бюджета "
+        "стоимость покупки будет учитываться постепенно.",
+        reply_markup=stock_purchase_keyboard(operation_id),
+    )
+
 async def telegram_call(token, method, payload):
     response = await fetch(
         f"https://api.telegram.org/bot{token}/{method}",
