@@ -518,6 +518,62 @@ async def process_callback(bot, callback):
 
     await ensure_user(user_id)
 
+    if data.startswith("stock_months:"):
+        parts = data.split(":")
+
+        try:
+            operation_id = int(parts[1])
+            months = int(parts[2])
+        except (IndexError, TypeError, ValueError):
+            await bot.answer_callback(
+                callback_id,
+                "Некорректные данные покупки.",
+                True,
+            )
+            return
+
+        result = await mark_stock_purchase(
+            operation_id=operation_id,
+            months=months,
+        )
+
+        if not result.get("success"):
+            await bot.answer_callback(
+                callback_id,
+                result.get("error", "Не удалось отметить запас."),
+                True,
+            )
+            return
+
+        await bot.answer_callback(callback_id, "Запас отмечен")
+
+        if message_id:
+            await bot.edit_message(
+                chat_id,
+                message_id,
+                "✅ Покупка корма отмечена как запас на "
+                f"{months} мес.\n"
+                "В анализе бюджета стоимость будет распределена "
+                "по указанному сроку.",
+            )
+        return
+
+    if data.startswith("stock_skip:"):
+        await bot.answer_callback(
+            callback_id,
+            "Оставлено как обычный расход",
+        )
+
+        if message_id:
+            await bot.edit_message(
+                chat_id,
+                message_id,
+                "Покупка оставлена как обычный расход. "
+                "Отметку о запасе не добавляли.",
+            )
+        return
+
+
     if data == "cancel_action":
         await clear_state(user_id)
         await bot.answer_callback(callback_id, "Отменено")
