@@ -813,6 +813,7 @@ async def process_message(bot, message):
     # превращаться в доход через устаревший сценарий.
 
     # Доход из меню.
+    # Доход из меню.
     if state == "income_amount":
         try:
             amount = float(
@@ -820,22 +821,18 @@ async def process_message(bot, message):
             )
         except ValueError:
             amount = 0
-
         if amount <= 0:
             await bot.send_message(
                 chat_id,
                 "❌ Введи сумму больше нуля.",
             )
             return
-
         result = await add_income(
             telegram_id=user_id,
             amount=amount,
             description="Доход",
         )
-
         await clear_state(user_id)
-
         if not result["success"]:
             await bot.send_message(
                 chat_id,
@@ -843,34 +840,22 @@ async def process_message(bot, message):
                 main_menu(),
             )
             return
-
         try:
             balance = await get_current_balance()
         except Exception:
             balance = None
-
         response_text = (
             "✅ Доход записан.\n\n"
             f"Сумма: {money(amount)} ₽"
         )
-
         if balance is not None:
             response_text += (
                 f"\nОсновной счёт: {money(balance)} ₽"
             )
-
         await bot.send_message(
             chat_id,
             response_text,
             main_menu(),
-        )
-
-        await ask_about_stock_purchase(
-            bot=bot,
-            chat_id=chat_id,
-            result=result,
-            category=operation["category"],
-            description=operation["description"],
         )
         return
     # Расход из меню.
