@@ -34,6 +34,11 @@ async def start_income_event(
     event_date: date,
     planned_day: int | None = None,
 ):
+    """
+    Совместимость со старым сценарием событий дохода.
+    Ручная запись зарплаты и аванса больше не должна
+    вызывать эту функцию.
+    """
     day = event_date.day
 
     last_day = calendar.monthrange(
@@ -225,13 +230,14 @@ async def record_actual_income(
     actual_date: date | None = None,
     telegram_id: int | None = None,
 ):
-    if actual_income < 0:
+    """
+    Старый сценарий записи дохода через событие.
+    Обычный ввод дохода должен использовать add_income.
+    """
+    if actual_income <= 0:
         return {
             "success": False,
-            "error": (
-                "Сумма дохода не может быть "
-                "отрицательной."
-            ),
+            "error": "Сумма дохода должна быть больше нуля.",
         }
 
     event = await get_event(event_id)
@@ -272,13 +278,15 @@ async def record_actual_payment(
     actual_amount: float,
     telegram_id: int | None = None,
 ):
-    if actual_amount < 0:
+    """
+    Записывает фактически оплаченный обязательный платёж.
+    Не связывает его с суммой полученной зарплаты
+    и не рассчитывает остаток от события дохода.
+    """
+    if actual_amount <= 0:
         return {
             "success": False,
-            "error": (
-                "Сумма платежа не может быть "
-                "отрицательной."
-            ),
+            "error": "Сумма платежа должна быть больше нуля.",
         }
 
     saved = await save_actual_payment(
@@ -293,34 +301,11 @@ async def record_actual_payment(
             "error": "Обязательный платёж не найден.",
         }
 
-    if not saved["success"]:
+    if not saved.get("success"):
         return saved
-
-    event_id = await get_payment_event_id(
-        payment_id
-    )
-
-    if not event_id:
-        return {
-            "success": False,
-            "error": (
-                "Событие дохода для платежа "
-                "не найдено."
-            ),
-        }
-
-    summary = await get_event_summary(
-        event_id
-    )
 
     return {
         **saved,
-        "event_id": event_id,
-        "remaining": (
-            summary["remaining"]
-            if summary
-            else None
-        ),
         "allocation": None,
     }
 
@@ -328,7 +313,11 @@ async def record_actual_payment(
 async def get_payment_event_id(
     payment_id: int,
 ):
-    value = await fetch_value(
+    """
+    Совместимость со старым форматом базы данных:
+    обязательные платежи пока имеют ссылку на событие.
+    """
+    return await fetch_value(
         """
         SELECT salary_event_id
         FROM mandatory_payments
@@ -337,12 +326,15 @@ async def get_payment_event_id(
         payment_id,
     )
 
-    return value
-
 
 async def get_event_summary(
     event_id: int,
 ):
+    """
+    Сводка старого события дохода.
+    Не используется для подтверждения оплаты
+    обязательного платежа.
+    """
     event = await get_event(event_id)
 
     if not event:
@@ -362,9 +354,7 @@ async def get_event_summary(
         for payment in payments
     )
 
-    actual_income = (
-        event["actual_income"] or 0
-    )
+    actual_income = event["actual_income"] or 0
 
     all_payments_paid = (
         len(payments) > 0
@@ -374,32 +364,20 @@ async def get_event_summary(
         )
     )
 
-    remaining = (
-        actual_income
-        - total_actual_payments
-    )
-
-    planned_remaining = (
-        event["planned_income"]
-        - total_planned_payments
-    )
-
     return {
         "event": event,
         "payments": payments,
-        "total_planned_payments": (
-            total_planned_payments
-        ),
-        "total_actual_payments": (
-            total_actual_payments
-        ),
+        "total_planned_payments": total_planned_payments,
+        "total_actual_payments": total_actual_payments,
         "planned_remaining": (
-            planned_remaining
+            event["planned_income"]
+            - total_planned_payments
         ),
-        "remaining": remaining,
-        "all_payments_paid": (
-            all_payments_paid
+        "remaining": (
+            actual_income
+            - total_actual_payments
         ),
+        "all_payments_paid": all_payments_paid,
     }
 
 
