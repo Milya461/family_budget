@@ -1,3 +1,4 @@
+
 from datetime import date, datetime, timedelta, timezone
 import calendar
 
@@ -74,8 +75,27 @@ async def start_income_event(
     )
 
     if existing:
+        event_id = existing["id"]
+
+        existing_payments = await get_event_payments(
+            event_id
+        )
+
+        existing_payment_names = {
+            payment["payment_name"]
+            for payment in existing_payments
+        }
+
+        for payment_name, planned_amount in planned_payments:
+            if payment_name not in existing_payment_names:
+                await create_mandatory_payment(
+                    salary_event_id=event_id,
+                    payment_name=payment_name,
+                    planned_amount=planned_amount,
+                )
+
         return {
-            "event_id": existing["id"],
+            "event_id": event_id,
             "date": event_date.isoformat(),
             "planned_day": planned_day,
             "planned_income": planned_income,
