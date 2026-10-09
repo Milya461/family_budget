@@ -202,45 +202,55 @@ async def add_income(
     amount: float,
     description: str,
 ):
-    user_id = await fetch_value(
-        """
-        SELECT id
-        FROM users
-        WHERE telegram_id = ?
-        """,
-        telegram_id,
-    )
+    try:
+        user_id = await fetch_value(
+            """
+            SELECT id
+            FROM users
+            WHERE telegram_id = ?
+            """,
+            telegram_id,
+        )
 
-    if user_id is None:
+        if user_id is None:
+            return {
+                "success": False,
+                "error": (
+                    "Пользователь не найден. "
+                    "Отправьте /start."
+                ),
+            }
+
+        await execute(
+            """
+            INSERT INTO operations (
+                user_id,
+                operation_type,
+                amount,
+                description,
+                operation_date
+            )
+            VALUES (?, 'income', ?, ?, ?)
+            """,
+            user_id,
+            amount,
+            description,
+            get_moscow_today().isoformat(),
+        )
+
+        return {
+            "success": True,
+            "amount": amount,
+        }
+
+    except Exception as error:
         return {
             "success": False,
             "error": (
-                "Пользователь не найден. "
-                "Отправьте /start."
+                f"Диагностика add_income: "
+                f"{type(error).__name__}: {error}"
             ),
         }
-
-    await execute(
-        """
-        INSERT INTO operations (
-            user_id,
-            operation_type,
-            amount,
-            description,
-            operation_date
-        )
-        VALUES (?, 'income', ?, ?, ?)
-        """,
-        user_id,
-        amount,
-        description,
-        get_moscow_today().isoformat(),
-    )
-
-    return {
-        "success": True,
-        "amount": amount,
-    }
 
 
 async def get_monthly_report(
