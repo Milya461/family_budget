@@ -859,13 +859,20 @@ async def process_message(bot, message):
                 f"\nОсновной счёт: {money(balance)} ₽"
             )
 
-        await bot.send_message(
+       await bot.send_message(
             chat_id,
             response_text,
             main_menu(),
         )
-        return
 
+        await ask_about_stock_purchase(
+            bot=bot,
+            chat_id=chat_id,
+            result=result,
+            category=operation["category"],
+            description=operation["description"],
+        )
+        return
     # Расход из меню.
     if state == "expense_amount":
         try:
