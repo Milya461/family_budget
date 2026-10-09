@@ -1,4 +1,3 @@
-
 import json
 import re
 import traceback
@@ -16,12 +15,12 @@ from app.budget import (
 from app.payment_flow import (
     get_current_balance,
     get_moscow_today,
-    record_actual_income,
     record_actual_payment,
 )
 from app.payments import (
     get_mandatory_payment,
     get_month_mandatory_payments,
+    get_nearest_unpaid_payment,
 )
 from app.allocation import get_monthly_budget_summary
 from app.scheduler import daily_income_check
@@ -245,26 +244,6 @@ async def clear_state(telegram_id):
     """, telegram_id)
 
 
-async def get_pending_income(telegram_id):
-    row = await fetch_one("""
-        SELECT salary_event_id
-        FROM pending_income
-        WHERE telegram_id = ?
-    """, telegram_id)
-
-    if not row:
-        return None
-
-    return row["salary_event_id"]
-
-
-async def remove_pending_income(telegram_id):
-    await execute("""
-        DELETE FROM pending_income
-        WHERE telegram_id = ?
-    """, telegram_id)
-
-
 async def send_start(bot, chat_id):
     await bot.send_message(
         chat_id,
@@ -277,7 +256,12 @@ async def send_start(bot, chat_id):
         "Дополнительные доходы тоже можно записывать в любой день:\n"
         "• 2000 кэшбэк\n"
         "• мама прислала 5000\n\n"
-        "Обязательные платежи записываются отдельно через меню.",
+        "Обязательные платежи тоже можно записывать текстом:\n"
+        "• 18000 кредитка\n"
+        "• 15000 за машину\n"
+        "• 9000 квартира\n"
+        "• 10000 коммуналка\n\n"
+        "Или выбери платёж в меню.",
         main_menu(),
     )
 
@@ -685,13 +669,11 @@ async def process_message(bot, message):
 
     if text.startswith("/start"):
         await clear_state(user_id)
-        await remove_pending_income(user_id)
         await send_start(bot, chat_id)
         return
 
     if text == "↩️ Отменить последнюю операцию":
         await clear_state(user_id)
-        await remove_pending_income(user_id)
         await bot.send_message(
             chat_id,
             "↩️ Текущая операция отменена.",
@@ -700,60 +682,10 @@ async def process_message(bot, message):
         return
 
     state, state_data = await get_state(user_id)
-    pending_event_id = await get_pending_income(user_id)
 
-    # Совместимость со старым незавершённым вводом дохода.
-    # Новые зарплаты и авансы больше не создают такие события.
-    if (
-        state != "income_amount"
-        and pending_event_id is not None
-    ):
-        try:
-            amount = float(
-                text.replace(" ", "").replace(",", ".")
-            )
-        except ValueError:
-            amount = None
-
-        if amount is not None and amount > 0:
-            result = await record_actual_income(
-                event_id=pending_event_id,
-                actual_income=amount,
-                actual_date=get_moscow_today(),
-                telegram_id=user_id,
-            )
-
-            await remove_pending_income(user_id)
-            await clear_state(user_id)
-
-            if result["success"]:
-                try:
-                    balance = await get_current_balance()
-                except Exception:
-                    balance = None
-
-                response_text = (
-                    "✅ Доход записан.\n\n"
-                    f"Фактически: {money(amount)} ₽"
-                )
-
-                if balance is not None:
-                    response_text += (
-                        f"\nОсновной счёт: {money(balance)} ₽"
-                    )
-
-                await bot.send_message(
-                    chat_id,
-                    response_text,
-                    main_menu(),
-                )
-            else:
-                await bot.send_message(
-                    chat_id,
-                    f"❌ {result['error']}",
-                    main_menu(),
-                )
-            return
+    # Старые pending_income-записи не обрабатываем и не удаляем.
+    # Обычное числовое сообщение не должно автоматически
+    # превращаться в доход через устаревший сценарий.
 
     # Доход из меню.
     if state == "income_amount":
@@ -876,7 +808,7 @@ async def process_message(bot, message):
         )
         return
 
-    # Фактическая сумма обязательного платежа.
+    # Фактическая сумма обязательного платежа из меню.
     if state == "payment_amount":
         try:
             amount = float(
@@ -994,8 +926,7 @@ async def process_message(bot, message):
         )
         return
 
-    # Зарплата и аванс — обычные доходы без привязки к датам
-    # и без создания событий обязательных платежей.
+    # Зарплата и аванс — обычные доходы без привязки к датам.
     if is_planned_income_message(text):
         amount = extract_amount(text)
 
@@ -1053,6 +984,62 @@ async def process_message(bot, message):
 
     # Операции, введённые обычным текстом.
     operation = parse_operation(text)
+
+    # Обязательный платёж: находим ближайший неоплаченный
+    # платёж и записываем именно введённую сумму.
+    if operation and operation["type"] == "payment":
+        payment = await get_nearest_unpaid_payment(
+            operation["debt"]
+        )
+
+        if not payment:
+            await bot.send_message(
+                chat_id,
+                "❌ Не нашёл подходящий неоплаченный платёж "
+                "для этой операции.\n\n"
+                "Открой меню «🏦 Обязательные платежи» "
+                "и проверь список перед повторной отправкой.",
+                main_menu(),
+            )
+            return
+
+        result = await record_actual_payment(
+            payment_id=payment["id"],
+            actual_amount=operation["amount"],
+            telegram_id=user_id,
+        )
+
+        if not result.get("success"):
+            await bot.send_message(
+                chat_id,
+                f"❌ {result.get('error', 'Не удалось записать платёж.')}",
+                main_menu(),
+            )
+            return
+
+        try:
+            balance = await get_current_balance()
+        except Exception:
+            balance = None
+
+        response_text = (
+            "✅ Обязательный платёж записан.\n\n"
+            f"Платёж: {result['payment_name']}\n"
+            f"Фактически оплачено: {money(result['actual_amount'])} ₽\n"
+            f"План: {money(result['planned_amount'])} ₽"
+        )
+
+        if balance is not None:
+            response_text += (
+                f"\n💳 Основной счёт: {money(balance)} ₽"
+            )
+
+        await bot.send_message(
+            chat_id,
+            response_text,
+            main_menu(),
+        )
+        return
 
     if operation and operation["type"] == "expense":
         result = await save_expense(
@@ -1132,19 +1119,6 @@ async def process_message(bot, message):
         )
         return
 
-    if operation and operation["type"] == "payment":
-        await bot.send_message(
-            chat_id,
-            "🏦 Похоже, это обязательный платёж:\n\n"
-            f"{operation['debt']} — {money(operation['amount'])} ₽\n\n"
-            "Чтобы платёж попал в учёт обязательных платежей, "
-            "открой меню «🏦 Обязательные платежи» и выбери "
-            "соответствующий платёж. Так мы не создадим "
-            "дублирующую запись.",
-            main_menu(),
-        )
-        return
-
     await bot.send_message(
         chat_id,
         "Не удалось определить операцию.\n\n"
@@ -1155,7 +1129,11 @@ async def process_message(bot, message):
         "• 50000 зп\n"
         "• 27500 аванс\n"
         "• 2000 кэшбэк\n"
-        "• мама прислала 5000\n\n"
+        "• мама прислала 5000\n"
+        "• 18000 кредитка\n"
+        "• 15000 за машину\n"
+        "• 9000 квартира\n"
+        "• 10000 коммуналка\n\n"
         "Или выбери действие в меню.",
         main_menu(),
     )
