@@ -1,3 +1,4 @@
+
 from contextvars import ContextVar
 
 
@@ -27,6 +28,9 @@ def to_python(value):
     if value is None:
         return None
 
+    if type(value).__name__ == "JsUndefined":
+        return None
+
     converter = getattr(value, "to_py", None)
 
     if callable(converter):
@@ -34,6 +38,9 @@ def to_python(value):
             value = converter()
         except Exception:
             pass
+
+    if value is None or type(value).__name__ == "JsUndefined":
+        return None
 
     if isinstance(value, dict):
         return {
