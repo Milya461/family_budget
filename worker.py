@@ -457,19 +457,12 @@ async def undo_last_operation():
             operation_date[:7],
         )
 
-        if len(candidates) != 1:
+                if len(candidates) != 1:
             return {
                 "success": False,
                 "error": (
-                    "Диагностика отмены:\n"
-                    f"ID операции: {operation_id}\n"
-                    f"Тип: {operation_type}\n"
-                    f"Сумма: {amount}\n"
-                    f"Категория ID: {category_id}\n"
-                    f"Долг ID: {debt_id}\n"
-                    f"Описание: {description!r}\n"
-                    f"Дата: {operation_date}\n"
-                    f"Найдено платежей: {len(candidates)}\n"
+                    "Не удалось однозначно определить обязательный "
+                    "платёж, связанный с этой операцией. "
                     "Ничего не изменено."
                 ),
             }
