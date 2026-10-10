@@ -1,4 +1,3 @@
-
 from datetime import date, datetime, timedelta, timezone
 
 from app.db import (
@@ -7,7 +6,6 @@ from app.db import (
     fetch_all,
     fetch_value,
 )
-from app.payments import ensure_month_mandatory_payments
 from app.rebalancing import ensure_rebalancing_tables
 
 
@@ -463,16 +461,21 @@ async def save_allocation(
     await execute_many(statements)
 
 
-async def get_available_cash_for_allocation(month: str):
+async def get_available_cash_for_allocation(
+    month: str,
+    allocation_date: date | None = None,
+):
     """
     Считает свободные деньги:
-    остаток основного счёта минус неоплаченные обязательства
-    и неиспользованные суммы, уже выделенные категориям.
+    остаток основного счёта минус суммы, уже выделенные
+    категориям, и неоплаченные обязательства только на текущую
+    дату распределения — 10-е или 25-е число.
 
-    Если обязательный платёж уже записан как расход на нужную дату,
-    его сумма повторно не резервируется.
+    Не создаёт события доходов или обязательных платежей.
+    Будущие обязательства не резервируются.
     """
-    await ensure_month_mandatory_payments(month)
+    if allocation_date is None:
+        allocation_date = get_moscow_today()
 
     totals = await fetch_all(
         """
@@ -510,27 +513,34 @@ async def get_available_cash_for_allocation(month: str):
     else:
         main_account = 0.0
 
-    pending_payments = await fetch_value(
-        """
-        SELECT COALESCE(SUM(mp.planned_amount), 0)
-        FROM mandatory_payments AS mp
-        JOIN salary_events AS se
-          ON se.id = mp.salary_event_id
-        WHERE mp.status != 'paid'
-          AND substr(se.event_date, 1, 7) = ?
-          AND NOT EXISTS (
-              SELECT 1
-              FROM operations AS o
-              WHERE o.operation_type = 'expense'
-                AND o.description = mp.payment_name
-                AND substr(o.operation_date, 1, 7) = ?
-                AND CAST(substr(o.operation_date, 9, 2) AS INTEGER)
-                    = se.planned_day
-          )
-        """,
-        month,
-        month,
-    ) or 0
+    pending_payments = 0
+
+    if allocation_date.day in (10, 25):
+        pending_payments = await fetch_value(
+            """
+            SELECT COALESCE(SUM(mp.planned_amount), 0)
+            FROM mandatory_payments AS mp
+            JOIN salary_events AS se
+              ON se.id = mp.salary_event_id
+            WHERE mp.status != 'paid'
+              AND substr(se.event_date, 1, 7) = ?
+              AND se.planned_day = ?
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM operations AS o
+                  WHERE o.operation_type = 'expense'
+                    AND o.description = mp.payment_name
+                    AND substr(o.operation_date, 1, 7) = ?
+                    AND CAST(
+                        substr(o.operation_date, 9, 2)
+                        AS INTEGER
+                    ) = se.planned_day
+              )
+            """,
+            month,
+            allocation_date.day,
+            month,
+        ) or 0
 
     allocations = await get_monthly_allocation_totals(month)
     reserved_categories = 0.0
@@ -613,7 +623,10 @@ async def allocate_income_remainder(
 
     budgets = await calculate_remaining_monthly_budgets(month)
 
-    available_cash = await get_available_cash_for_allocation(month)
+    available_cash = await get_available_cash_for_allocation(
+        month,
+        allocation_date,
+    )
     amount_to_allocate = min(float(amount), available_cash)
 
     distribution = distribute_amount(
