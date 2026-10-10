@@ -858,8 +858,65 @@ async def process_message(bot, message):
             main_menu(),
         )
         return
-    # Расход из меню.
+        # Расход из меню.
     if state == "expense_amount":
+        operation = parse_operation(text)
+
+        # Формат: «1800 корм котам».
+        # Если описание и категория распознаны, сразу показываем подтверждение.
+        if (
+            operation
+            and operation.get("type") == "expense"
+            and operation.get("amount", 0) > 0
+            and operation.get("category")
+        ):
+            amount = operation["amount"]
+            category = operation["category"]
+            description = operation.get("description", "")
+
+            check = await check_expense(
+                telegram_id=user_id,
+                amount=amount,
+                category_name=category,
+            )
+
+            if not check.get("success"):
+                await bot.send_message(
+                    chat_id,
+                    f"❌ {check.get('error', 'Не удалось проверить расход.')}",
+                )
+                return
+
+            await set_state(
+                user_id,
+                "expense_confirm",
+                {
+                    "amount": amount,
+                    "category": category,
+                    "description": description,
+                },
+            )
+
+            warning = ""
+            if check.get("exceeded"):
+                warning = (
+                    "\n\n⚠️ Внимание: расход превышает "
+                    "оставшийся лимит категории."
+                )
+
+            await bot.send_message(
+                chat_id,
+                "🧾 Проверь расход:\n\n"
+                f"Сумма: {money(amount)} ₽\n"
+                f"Категория: {category}\n"
+                f"Описание: {description or 'без описания'}"
+                f"{warning}\n\n"
+                "Записать расход?",
+                confirm_keyboard(),
+            )
+            return
+
+        # Старый вариант тоже работает: сначала только сумма.
         try:
             amount = float(
                 text.replace(" ", "").replace(",", ".")
@@ -870,7 +927,11 @@ async def process_message(bot, message):
         if amount <= 0:
             await bot.send_message(
                 chat_id,
-                "❌ Введи сумму больше нуля.",
+                "❌ Введи сумму больше нуля.\n\n"
+                "Можно указать сумму и описание сразу:\n"
+                "• 1800 корм котам\n"
+                "• 599 продукты\n"
+                "• 2490 бензин",
             )
             return
 
