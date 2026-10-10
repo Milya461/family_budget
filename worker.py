@@ -1,3 +1,4 @@
+
 import json
 import re
 import traceback
@@ -174,6 +175,7 @@ async def ask_about_stock_purchase(
         "стоимость покупки будет учитываться постепенно.",
         reply_markup=stock_purchase_keyboard(operation_id),
     )
+
 
 async def telegram_call(token, method, payload):
     response = await fetch(
@@ -445,8 +447,17 @@ async def send_mandatory(bot, chat_id):
     buttons = []
 
     for payment in payments:
-        if payment["event_date"] != current_date:
-            current_date = payment["event_date"]
+        event_date = payment["event_date"]
+        planned_day = (
+            payment.get("planned_day")
+            or int(event_date[8:10])
+        )
+        display_date = (
+            f"{event_date[:8]}{int(planned_day):02d}"
+        )
+
+        if display_date != current_date:
+            current_date = display_date
             lines.extend([
                 f"📅 {current_date[8:10]}.{current_date[5:7]}",
                 "",
@@ -490,6 +501,7 @@ async def send_mandatory(bot, chat_id):
         "\n".join(lines),
         inline(buttons),
     )
+
 
 
 async def process_callback(bot, callback):
