@@ -341,7 +341,7 @@ async def undo_last_operation():
             "error": "Нет сохранённых операций для отмены.",
         }
 
-        operation_id = operation["id"]
+    operation_id = operation["id"]
     operation_type = operation["operation_type"]
     amount = float(operation["amount"] or 0)
     category_id = operation.get("category_id")
