@@ -465,9 +465,12 @@ async def save_allocation(
 
 async def get_available_cash_for_allocation(month: str):
     """
-    Считает сумму, которую можно распределить сейчас:
-    остаток основного счёта минус неоплаченные обязательные платежи
-    и деньги, уже выделенные категориям, но ещё не потраченные.
+    Считает свободные деньги:
+    остаток основного счёта минус неоплаченные обязательства
+    и неиспользованные суммы, уже выделенные категориям.
+
+    Если обязательный платёж уже записан как расход на нужную дату,
+    его сумма повторно не резервируется.
     """
     await ensure_month_mandatory_payments(month)
 
@@ -515,7 +518,17 @@ async def get_available_cash_for_allocation(month: str):
           ON se.id = mp.salary_event_id
         WHERE mp.status != 'paid'
           AND substr(se.event_date, 1, 7) = ?
+          AND NOT EXISTS (
+              SELECT 1
+              FROM operations AS o
+              WHERE o.operation_type = 'expense'
+                AND o.description = mp.payment_name
+                AND substr(o.operation_date, 1, 7) = ?
+                AND CAST(substr(o.operation_date, 9, 2) AS INTEGER)
+                    = se.planned_day
+          )
         """,
+        month,
         month,
     ) or 0
 
