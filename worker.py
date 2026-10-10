@@ -542,6 +542,7 @@ async def undo_last_operation():
         "amount": amount,
         "description": description or "Расход",
     }
+    
 async def send_start(bot, chat_id):
     await bot.send_message(
         chat_id,
