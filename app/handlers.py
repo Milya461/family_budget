@@ -1,4 +1,6 @@
-from datetime import datetime
+
+from datetime import date, datetime
+import calendar
 from zoneinfo import ZoneInfo
 
 from aiogram import Router
@@ -511,12 +513,32 @@ async def mandatory_payments_button(
 
     for payment in payments:
         event_date = payment["event_date"]
+        planned_day = (
+            payment.get("planned_day")
+            or int(event_date[8:10])
+        )
 
-        if event_date != current_event_date:
-            current_event_date = event_date
+        event_year, event_month = map(
+            int,
+            event_date[:7].split("-"),
+        )
+
+        last_day = calendar.monthrange(
+            event_year,
+            event_month,
+        )[1]
+
+        display_date = date(
+            event_year,
+            event_month,
+            min(int(planned_day), last_day),
+        ).isoformat()
+
+        if display_date != current_event_date:
+            current_event_date = display_date
 
             date_text = datetime.strptime(
-                event_date,
+                display_date,
                 "%Y-%m-%d",
             ).strftime("%d.%m")
 
