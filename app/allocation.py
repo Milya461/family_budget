@@ -1,20 +1,31 @@
+
 from datetime import date, datetime, timedelta, timezone
+
 from app.db import (
     execute,
     execute_many,
     fetch_all,
     fetch_value,
 )
+from app.payments import ensure_month_mandatory_payments
 from app.rebalancing import ensure_rebalancing_tables
+
+
 MOSCOW_TIMEZONE = timezone(timedelta(hours=3))
+
+
 def get_moscow_today():
     return datetime.now(MOSCOW_TIMEZONE).date()
+
+
 async def get_monthly_category_budgets(
     month: str | None = None,
 ):
     if month is None:
         month = get_moscow_today().strftime("%Y-%m")
+
     await ensure_rebalancing_tables()
+
     rows = await fetch_all(
         """
         SELECT
@@ -34,6 +45,7 @@ async def get_monthly_category_budgets(
         """,
         month,
     )
+
     return [
         {
             "id": row["id"],
@@ -42,19 +54,23 @@ async def get_monthly_category_budgets(
         }
         for row in rows
     ]
+
+
 async def _get_category_budgets_for_month(month: str):
     try:
         return await get_monthly_category_budgets(month)
     except TypeError as error:
-        # Поддержка тестов и старых подменённых функций,
-        # которые определены без параметра month.
         message = str(error)
+
         if (
             "positional argument" not in message
             and "unexpected keyword argument" not in message
         ):
             raise
+
         return await get_monthly_category_budgets()
+
+
 async def get_monthly_category_spent(
     category_id: int,
     month: str,
@@ -70,7 +86,10 @@ async def get_monthly_category_spent(
         category_id,
         month,
     )
+
     return value or 0
+
+
 async def get_savings_target():
     value = await fetch_value(
         """
@@ -79,7 +98,10 @@ async def get_savings_target():
         WHERE id = 1
         """
     )
+
     return value if value is not None else 23000
+
+
 async def get_savings_balance():
     value = await fetch_value(
         """
@@ -88,7 +110,10 @@ async def get_savings_balance():
         WHERE id = 1
         """
     )
+
     return value if value is not None else 0
+
+
 async def get_monthly_allocation_totals(month: str):
     category_rows = await fetch_all(
         """
@@ -102,6 +127,7 @@ async def get_monthly_allocation_totals(month: str):
         """,
         month,
     )
+
     savings_value = await fetch_value(
         """
         SELECT COALESCE(SUM(savings_amount), 0)
@@ -111,6 +137,7 @@ async def get_monthly_allocation_totals(month: str):
         """,
         month,
     )
+
     return {
         "categories": {
             row["category_id"]: row["amount"]
@@ -118,31 +145,44 @@ async def get_monthly_allocation_totals(month: str):
         },
         "savings": savings_value or 0,
     }
+
+
 async def calculate_remaining_monthly_budgets(
     month: str | None = None,
 ):
     if month is None:
         month = get_moscow_today().strftime("%Y-%m")
+
     categories = await _get_category_budgets_for_month(month)
     allocations = await get_monthly_allocation_totals(month)
+
     result = []
+
     for category in categories:
         spent = await get_monthly_category_spent(
             category_id=category["id"],
             month=month,
         )
+
         already_allocated = allocations["categories"].get(
             category["id"],
             0,
         )
+
         remaining_to_allocate = max(
-            category["monthly_limit"] - already_allocated,
+            category["monthly_limit"]
+            - max(
+                float(already_allocated or 0),
+                float(spent or 0),
+            ),
             0,
         )
+
         available_to_spend = max(
             already_allocated - spent,
             0,
         )
+
         result.append(
             {
                 "id": category["id"],
@@ -155,8 +195,10 @@ async def calculate_remaining_monthly_budgets(
                 "available_to_spend": available_to_spend,
             }
         )
+
     savings_target = await get_savings_target()
     savings_allocated = allocations["savings"]
+
     return {
         "month": month,
         "categories": result,
@@ -167,26 +209,34 @@ async def calculate_remaining_monthly_budgets(
             0,
         ),
     }
+
+
 async def get_monthly_budget_summary(
     month: str | None = None,
 ):
     if month is None:
         month = get_moscow_today().strftime("%Y-%m")
+
     categories = await _get_category_budgets_for_month(month)
     allocations = await get_monthly_allocation_totals(month)
+
     life_budget = sum(
         category["monthly_limit"]
         for category in categories
     )
+
     allocated = sum(allocations["categories"].values())
     spent = 0
+
     for category in categories:
         spent += await get_monthly_category_spent(
             category_id=category["id"],
             month=month,
         )
+
     savings_target = await get_savings_target()
     savings_allocated = allocations["savings"]
+
     return {
         "month": month,
         "life_budget": life_budget,
@@ -201,6 +251,8 @@ async def get_monthly_budget_summary(
             0,
         ),
     }
+
+
 def distribute_amount(
     amount: float,
     category_budgets: list[dict],
@@ -212,21 +264,27 @@ def distribute_amount(
             "savings": 0,
             "unallocated": 0,
         }
+
     available_categories = [
         category
         for category in category_budgets
         if category["remaining"] > 0
     ]
+
     category_total = sum(
         category["remaining"]
         for category in available_categories
     )
+
     amount_for_categories = min(amount, category_total)
     result_categories = []
+
     if amount_for_categories > 0 and category_total > 0:
         distributed = 0
+
         for index, category in enumerate(available_categories):
             category_remaining = category["remaining"]
+
             if index == len(available_categories) - 1:
                 allocation = amount_for_categories - distributed
             else:
@@ -236,9 +294,12 @@ def distribute_amount(
                     / category_total,
                     2,
                 )
+
             allocation = min(allocation, category_remaining)
+
             if allocation <= 0:
                 continue
+
             result_categories.append(
                 {
                     "category_id": category["id"],
@@ -246,25 +307,33 @@ def distribute_amount(
                     "amount": allocation,
                 }
             )
+
             distributed += allocation
+
     allocated_to_categories = sum(
         category["amount"]
         for category in result_categories
     )
+
     remaining_amount = max(
         amount - allocated_to_categories,
         0,
     )
+
     savings_allocation = min(
         savings_remaining,
         remaining_amount,
     )
+
     remaining_amount -= savings_allocation
+
     return {
         "categories": result_categories,
         "savings": savings_allocation,
         "unallocated": max(remaining_amount, 0),
     }
+
+
 async def save_allocation(
     month: str,
     categories: list[dict],
@@ -294,9 +363,11 @@ async def save_allocation(
             (allocation_key,),
         ),
     ]
+
     for category in categories:
         if category["amount"] <= 0:
             continue
+
         statements.append(
             (
                 """
@@ -326,6 +397,7 @@ async def save_allocation(
                 ),
             )
         )
+
     if savings > 0:
         statements.append(
             (
@@ -354,6 +426,7 @@ async def save_allocation(
                 ),
             )
         )
+
         statements.append(
             (
                 """
@@ -373,6 +446,7 @@ async def save_allocation(
                 ),
             )
         )
+
     statements.append(
         (
             """
@@ -385,7 +459,88 @@ async def save_allocation(
             (allocation_key,),
         )
     )
+
     await execute_many(statements)
+
+
+async def get_available_cash_for_allocation(month: str):
+    """
+    Считает сумму, которую можно распределить сейчас:
+    остаток основного счёта минус неоплаченные обязательные платежи
+    и деньги, уже выделенные категориям, но ещё не потраченные.
+    """
+    await ensure_month_mandatory_payments(month)
+
+    totals = await fetch_all(
+        """
+        SELECT
+            COALESCE(
+                SUM(
+                    CASE
+                        WHEN operation_type = 'income'
+                        THEN amount
+                        ELSE 0
+                    END
+                ),
+                0
+            ) AS income,
+            COALESCE(
+                SUM(
+                    CASE
+                        WHEN operation_type = 'expense'
+                        THEN amount
+                        ELSE 0
+                    END
+                ),
+                0
+            ) AS expenses
+        FROM operations
+        """
+    )
+
+    if totals:
+        main_account = (
+            float(totals[0]["income"] or 0)
+            - float(totals[0]["expenses"] or 0)
+            - float(await get_savings_balance() or 0)
+        )
+    else:
+        main_account = 0.0
+
+    pending_payments = await fetch_value(
+        """
+        SELECT COALESCE(SUM(mp.planned_amount), 0)
+        FROM mandatory_payments AS mp
+        JOIN salary_events AS se
+          ON se.id = mp.salary_event_id
+        WHERE mp.status != 'paid'
+          AND substr(se.event_date, 1, 7) = ?
+        """,
+        month,
+    ) or 0
+
+    allocations = await get_monthly_allocation_totals(month)
+    reserved_categories = 0.0
+
+    for category_id, allocated in allocations["categories"].items():
+        spent = await get_monthly_category_spent(
+            category_id,
+            month,
+        )
+
+        reserved_categories += max(
+            float(allocated or 0) - float(spent or 0),
+            0,
+        )
+
+    return max(
+        main_account
+        - float(pending_payments or 0)
+        - reserved_categories,
+        0,
+    )
+
+
 async def allocate_income_remainder(
     amount: float,
     allocation_date: date | None = None,
@@ -400,14 +555,18 @@ async def allocate_income_remainder(
             "unallocated": 0,
             "already_allocated": False,
         }
+
     if allocation_date is None:
         allocation_date = get_moscow_today()
+
     month = allocation_date.strftime("%Y-%m")
+
     if allocation_key is None:
         allocation_key = (
             f"manual:{allocation_date.isoformat()}:"
             f"{amount:.2f}"
         )
+
     await execute(
         """
         CREATE TABLE IF NOT EXISTS allocation_batches (
@@ -418,6 +577,7 @@ async def allocate_income_remainder(
         )
         """
     )
+
     existing = await fetch_value(
         """
         SELECT status
@@ -426,6 +586,7 @@ async def allocate_income_remainder(
         """,
         allocation_key,
     )
+
     if existing == "done":
         return {
             "success": True,
@@ -436,12 +597,18 @@ async def allocate_income_remainder(
             "unallocated": 0,
             "already_allocated": True,
         }
+
     budgets = await calculate_remaining_monthly_budgets(month)
+
+    available_cash = await get_available_cash_for_allocation(month)
+    amount_to_allocate = min(float(amount), available_cash)
+
     distribution = distribute_amount(
-        amount=amount,
+        amount=amount_to_allocate,
         category_budgets=budgets["categories"],
         savings_remaining=budgets["savings_remaining"],
     )
+
     await save_allocation(
         month=month,
         categories=distribution["categories"],
@@ -450,6 +617,7 @@ async def allocate_income_remainder(
         allocation_date=allocation_date,
         allocation_key=allocation_key,
     )
+
     completed = await fetch_value(
         """
         SELECT status
@@ -458,6 +626,7 @@ async def allocate_income_remainder(
         """,
         allocation_key,
     )
+
     if completed != "done":
         return {
             "success": False,
@@ -465,9 +634,12 @@ async def allocate_income_remainder(
             "amount": amount,
             "already_allocated": False,
         }
+
     return {
         "success": True,
         "amount": amount,
+        "allocated_amount": amount_to_allocate,
+        "available_cash": available_cash,
         "month": month,
         "categories": distribution["categories"],
         "savings": distribution["savings"],
