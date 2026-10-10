@@ -457,7 +457,7 @@ async def undo_last_operation():
             operation_date[:7],
         )
 
-                if len(candidates) != 1:
+        if len(candidates) != 1:
             return {
                 "success": False,
                 "error": (
