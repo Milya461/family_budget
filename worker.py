@@ -420,10 +420,10 @@ async def undo_last_operation():
     }
 
     is_payment = (
-        debt_id is not None
+        description in payment_names
         or (
             category_id is None
-            and description in payment_names
+            and debt_id is not None
         )
     )
 
