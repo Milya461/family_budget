@@ -6,7 +6,15 @@ from urllib.parse import urlparse
 
 from workers import WorkerEntrypoint, Response, fetch
 
-from app.db import configure_d1, execute, fetch_one
+from datetime import date
+
+from app.db import (
+    configure_d1,
+    execute,
+    execute_many,
+    fetch_all,
+    fetch_one,
+)
 from app.budget import (
     add_income,
     check_expense,
@@ -24,7 +32,10 @@ from app.payments import (
     get_nearest_unpaid_payment,
 )
 from app.allocation import get_monthly_budget_summary
-from app.rebalancing import mark_stock_purchase
+from app.rebalancing import (
+    ensure_rebalancing_tables,
+    mark_stock_purchase,
+)
 from app.scheduler import daily_income_check
 from app.parser import parse_operation, extract_amount
 
@@ -306,7 +317,231 @@ async def clear_state(telegram_id):
         WHERE telegram_id = ?
     """, telegram_id)
 
+async def undo_last_operation():
+    """Безопасно отменяет последнюю сохранённую операцию."""
+    await ensure_rebalancing_tables()
 
+    operation = await fetch_one("""
+        SELECT
+            id,
+            operation_type,
+            amount,
+            category_id,
+            debt_id,
+            description,
+            operation_date
+        FROM operations
+        ORDER BY id DESC
+        LIMIT 1
+    """)
+
+    if not operation:
+        return {
+            "success": False,
+            "error": "Нет сохранённых операций для отмены.",
+        }
+
+    operation_id = operation["id"]
+    operation_type = operation["operation_type"]
+    amount = float(operation["amount"] or 0)
+    category_id = operation.get("category_id")
+    debt_id = operation.get("debt_id")
+    description = operation.get("description") or ""
+    operation_date = operation.get("operation_date") or ""
+
+    if operation_type == "income":
+        allocation_key = f"income:{operation_id}"
+        month = operation_date[:7]
+
+        savings = await fetch_one("""
+            SELECT COUNT(*) AS total
+            FROM monthly_allocations
+            WHERE month = ?
+              AND source = 'savings'
+              AND savings_amount > 0
+        """, month)
+
+        if int((savings or {}).get("total") or 0) > 0:
+            return {
+                "success": False,
+                "error": (
+                    "Последняя операция — доход, но в этом месяце "
+                    "есть накопления, которые нельзя однозначно "
+                    "связать с конкретным доходом. Ничего не изменено."
+                ),
+            }
+
+        await execute_many([
+            (
+                """
+                DELETE FROM monthly_allocations
+                WHERE source = ?
+                """,
+                (allocation_key,),
+            ),
+            (
+                """
+                DELETE FROM allocation_batches
+                WHERE source_key = ?
+                """,
+                (allocation_key,),
+            ),
+            (
+                """
+                DELETE FROM operations
+                WHERE id = ?
+                """,
+                (operation_id,),
+            ),
+        ])
+
+        return {
+            "success": True,
+            "operation_type": "income",
+            "amount": amount,
+            "description": description or "Доход",
+        }
+
+    if operation_type != "expense":
+        return {
+            "success": False,
+            "error": (
+                "Этот тип операции нельзя безопасно отменить."
+            ),
+        }
+
+    payment_names = {
+        "Кредитная карта",
+        "Кредит на машину",
+        "Ипотека",
+        "Коммунальные услуги",
+    }
+
+    is_payment = (
+        debt_id is not None
+        or (
+            category_id is None
+            and description in payment_names
+        )
+    )
+
+    statements = []
+
+    if is_payment:
+        candidates = await fetch_all("""
+            SELECT
+                mp.id,
+                mp.payment_name,
+                mp.actual_amount,
+                mp.debt_id,
+                se.event_date
+            FROM mandatory_payments mp
+            JOIN salary_events se
+              ON se.id = mp.salary_event_id
+            WHERE mp.status = 'paid'
+              AND mp.payment_name = ?
+              AND mp.actual_amount = ?
+              AND (
+                    mp.debt_id = ?
+                    OR (
+                        mp.debt_id IS NULL
+                        AND ? IS NULL
+                    )
+              )
+              AND substr(se.event_date, 1, 7) = ?
+        """,
+            description,
+            amount,
+            debt_id,
+            debt_id,
+            operation_date[:7],
+        )
+
+        if len(candidates) != 1:
+            return {
+                "success": False,
+                "error": (
+                    "Не удалось однозначно определить обязательный "
+                    "платёж, связанный с этой операцией. "
+                    "Ничего не изменено."
+                ),
+            }
+
+        payment_id = candidates[0]["id"]
+
+        statements.append((
+            """
+            UPDATE mandatory_payments
+            SET actual_amount = NULL,
+                status = 'pending'
+            WHERE id = ?
+              AND status = 'paid'
+            """,
+            (payment_id,),
+        ))
+
+        statements.append((
+            """
+            DELETE FROM stock_purchases
+            WHERE operation_id = ?
+            """,
+            (operation_id,),
+        ))
+
+        statements.append((
+            """
+            DELETE FROM operations
+            WHERE id = ?
+              AND EXISTS (
+                  SELECT 1
+                  FROM mandatory_payments
+                  WHERE id = ?
+                    AND status = 'pending'
+              )
+            """,
+            (operation_id, payment_id),
+        ))
+
+    else:
+        statements.append((
+            """
+            DELETE FROM stock_purchases
+            WHERE operation_id = ?
+            """,
+            (operation_id,),
+        ))
+
+        statements.append((
+            """
+            DELETE FROM operations
+            WHERE id = ?
+            """,
+            (operation_id,),
+        ))
+
+    await execute_many(statements)
+
+    remaining = await fetch_one("""
+        SELECT id
+        FROM operations
+        WHERE id = ?
+    """, operation_id)
+
+    if remaining:
+        return {
+            "success": False,
+            "error": (
+                "Не удалось подтвердить отмену операции. "
+                "Проверь балансы и обязательные платежи."
+            ),
+        }
+
+    return {
+        "success": True,
+        "operation_type": "expense",
+        "amount": amount,
+        "description": description or "Расход",
+    }
 async def send_start(bot, chat_id):
     await bot.send_message(
         chat_id,
@@ -797,14 +1032,44 @@ async def process_message(bot, message):
         await send_start(bot, chat_id)
         return
 
+    
     if text == "↩️ Отменить последнюю операцию":
-        await clear_state(user_id)
+        state, _ = await get_state(user_id)
+
+        if state:
+            await clear_state(user_id)
+            await bot.send_message(
+                chat_id,
+                "↩️ Текущая незавершённая операция отменена. "
+                "Последняя сохранённая операция не изменена.",
+                main_menu(),
+            )
+            return
+
+        result = await undo_last_operation()
+
+        if not result.get("success"):
+            await bot.send_message(
+                chat_id,
+                f"❌ {result.get('error', 'Не удалось отменить операцию.')}",
+                main_menu(),
+            )
+            return
+
+        operation_label = (
+            "доход" if result["operation_type"] == "income"
+            else "расход"
+        )
         await bot.send_message(
             chat_id,
-            "↩️ Текущая операция отменена.",
+            "↩️ Последняя операция отменена.\n\n"
+            f"Тип: {operation_label}\n"
+            f"Сумма: {money(result['amount'])} ₽\n"
+            f"Описание: {result['description']}",
             main_menu(),
         )
         return
+
 
     state, state_data = await get_state(user_id)
 
