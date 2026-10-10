@@ -341,11 +341,13 @@ async def undo_last_operation():
             "error": "Нет сохранённых операций для отмены.",
         }
 
-    operation_id = operation["id"]
+        operation_id = operation["id"]
     operation_type = operation["operation_type"]
     amount = float(operation["amount"] or 0)
     category_id = operation.get("category_id")
     debt_id = operation.get("debt_id")
+    if debt_id in ("jsnull", "null", "None", ""):
+        debt_id = None
     description = operation.get("description") or ""
     operation_date = operation.get("operation_date") or ""
 
