@@ -37,6 +37,7 @@ from app.rebalancing import (
     mark_stock_purchase,
 )
 from app.scheduler import daily_income_check
+from app.daily_reminders import handle_daily_expenses_callback
 from app.parser import parse_operation, extract_amount
 
 
@@ -755,7 +756,13 @@ async def process_callback(bot, callback):
         return
 
     await ensure_user(user_id)
-
+    if data.startswith("daily_expenses:"):
+        await handle_daily_expenses_callback(
+            bot=bot,
+            callback=callback,
+        )
+        return
+        
     if data.startswith("stock_months:"):
         parts = data.split(":")
 
