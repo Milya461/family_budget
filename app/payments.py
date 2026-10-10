@@ -122,22 +122,38 @@ async def create_mandatory_payment(
             payment_name,
         )
 
-    result = await execute(
-        """
-        INSERT INTO mandatory_payments (
+    if debt_id is None:
+        result = await execute(
+            """
+            INSERT INTO mandatory_payments (
+                salary_event_id,
+                payment_name,
+                planned_amount,
+                status
+            )
+            VALUES (?, ?, ?, 'pending')
+            """,
+            salary_event_id,
+            payment_name,
+            planned_amount,
+        )
+    else:
+        result = await execute(
+            """
+            INSERT INTO mandatory_payments (
+                salary_event_id,
+                payment_name,
+                debt_id,
+                planned_amount,
+                status
+            )
+            VALUES (?, ?, ?, ?, 'pending')
+            """,
             salary_event_id,
             payment_name,
             debt_id,
             planned_amount,
-            status
         )
-        VALUES (?, ?, ?, ?, 'pending')
-        """,
-        salary_event_id,
-        payment_name,
-        debt_id,
-        planned_amount,
-    )
 
     return result.meta.last_row_id
 
@@ -513,19 +529,35 @@ async def save_actual_payment(
 
     operation_date = get_moscow_today().isoformat()
 
-    batch_result = await execute_many([
-        (
-            """
-            UPDATE mandatory_payments
-            SET actual_amount = ?,
-                status = 'paid'
-            WHERE id = ?
-              AND status != 'paid'
-            """,
-            (actual_amount, payment_id),
-        ),
-        (
-            """
+    update_sql = """
+        UPDATE mandatory_payments
+        SET actual_amount = ?,
+            status = 'paid'
+        WHERE id = ?
+          AND status != 'paid'
+    """
+
+    if payment["debt_id"] is None:
+        operation_sql = """
+            INSERT INTO operations (
+                user_id,
+                operation_type,
+                amount,
+                description,
+                operation_date
+            )
+            SELECT ?, 'expense', ?, ?, ?
+            WHERE changes() = 1
+        """
+
+        operation_params = (
+            user_id,
+            actual_amount,
+            payment["payment_name"],
+            operation_date,
+        )
+    else:
+        operation_sql = """
             INSERT INTO operations (
                 user_id,
                 operation_type,
@@ -536,14 +568,24 @@ async def save_actual_payment(
             )
             SELECT ?, 'expense', ?, ?, ?, ?
             WHERE changes() = 1
-            """,
-            (
-                user_id,
-                actual_amount,
-                payment["debt_id"],
-                payment["payment_name"],
-                operation_date,
-            ),
+        """
+
+        operation_params = (
+            user_id,
+            actual_amount,
+            payment["debt_id"],
+            payment["payment_name"],
+            operation_date,
+        )
+
+    batch_result = await execute_many([
+        (
+            update_sql,
+            (actual_amount, payment_id),
+        ),
+        (
+            operation_sql,
+            operation_params,
         ),
     ])
 
