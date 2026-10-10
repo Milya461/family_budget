@@ -331,7 +331,7 @@ async def undo_last_operation():
             description,
             operation_date
         FROM operations
-        ORDER BY id DESC
+        ORDER BY rowid DESC
         LIMIT 1
     """)
 
