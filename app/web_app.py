@@ -135,6 +135,23 @@ tbody tr:last-child td{border-bottom:0}
 @media(max-width:900px){.shell{padding:0 20px}.hero{min-height:310px}.wave{width:78%;opacity:.65}.content-grid{grid-template-columns:1fr}.side-stack{grid-template-columns:repeat(2,minmax(0,1fr))}.action-layout{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:20px}.action-card:nth-child(2){border-right:0;margin-right:0}.action-card:nth-child(3){border-right:1px solid var(--line)}.action-card:nth-child(4){border-right:0;margin-right:0}}
 @media(max-width:600px){.shell{padding:0 16px}.topbar{padding:16px 0;align-items:flex-start}.nav{gap:12px;justify-content:flex-end}.nav a{font-size:9px}.nav a:nth-child(n+3){display:none}.nav .logout{padding:7px 9px}.hero{padding-top:36px;min-height:305px}.hero h1{font-size:clamp(43px,13vw,68px);margin-top:23px}.wave{right:-24%;top:26px;width:105%;opacity:.48}.hero-bottom{align-items:start;flex-direction:column;gap:15px}.hero-bottom p{max-width:290px}.section-heading{align-items:flex-start;flex-direction:column;padding-top:22px}.section-heading h2{font-size:19px}.month-control{width:100%;justify-content:space-between}.month-control input{width:145px}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.stat{margin:0;padding:15px 10px 16px 0;border-bottom:1px solid var(--line)}.stat:nth-child(2){margin:0;padding-left:12px;border-right:0}.stat:nth-child(3){padding-top:16px}.stat:nth-child(4){padding-left:12px;padding-top:16px;border-right:0}.stat .value{font-size:28px}.category-list{grid-template-columns:1fr}.category:nth-child(odd){padding-right:0;border-right:0}.category:nth-child(even){padding-left:0}.category{padding:15px 0}.side-stack{grid-template-columns:1fr}.action-layout{grid-template-columns:repeat(2,minmax(0,1fr));column-gap:14px}.action-card{padding:18px 0;border-right:0!important;margin:0!important}.action-card:nth-child(odd){padding-right:14px;border-right:1px solid var(--line)!important}.action-card h3{font-size:12px}.action-card p{min-height:0}.payment-list{grid-template-columns:1fr}.form-grid{grid-template-columns:1fr}.form-grid .wide{grid-column:auto}.footer{align-items:flex-start;flex-direction:column;gap:7px}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{transition:none!important}}
+
+/* Final responsive fixes: forms use the available width on phones. */
+.home-shortcuts{display:none!important}
+.bottom-nav{grid-template-columns:repeat(5,minmax(0,1fr))}
+.bottom-nav button[data-view-target="more"]{display:none!important}
+.operation-forms{grid-template-columns:repeat(2,minmax(0,1fr));gap:28px;border-bottom:1px solid var(--line)}
+.operation-forms .action-card{min-width:0;margin:0;padding:22px 20px 24px 0}
+.operation-forms .action-card:first-child{border-right:1px solid var(--line);padding-right:26px}
+.operation-forms .action-card:nth-child(2){border-right:0;margin:0;padding-right:0;padding-left:0}
+.operation-forms .action-card .form-grid{grid-template-columns:minmax(0,1fr)}
+.operation-forms .action-card .form-grid .wide{grid-column:auto}
+@media(max-width:600px){
+  .operation-forms{grid-template-columns:minmax(0,1fr);gap:0}
+  .operation-forms .action-card{border-right:0!important;border-bottom:1px solid var(--line);padding:22px 0!important}
+  .operation-forms .action-card .form-grid{grid-template-columns:minmax(0,1fr)}
+}
+
 </style>
 </head>
 <body>
@@ -190,12 +207,6 @@ tbody tr:last-child td{border-bottom:0}
   <div class="stat"><div class="label">Обязательные платежи</div><div class="value" id="paymentsCount">—</div><div class="note" id="paymentsNote">За выбранный месяц</div></div>
 </section>
 
-<section class="home-shortcuts">
-  <div class="home-shortcut-copy"><span class="eyebrow">ТВОИ ДЕНЬГИ · ОДИН КАБИНЕТ</span><h2>Что проверим сегодня?</h2><p>Остальные данные разложены по разделам в нижнем меню.</p></div>
-  <button class="pill" type="button" data-view-target="credits">Кредиты ↗</button>
-  <button class="pill" type="button" data-view-target="savings">Копилка ↗</button>
-  <button class="pill" type="button" data-view-target="operations">Добавить операцию ↗</button>
-</section>
 </section>
 
 <section class="app-view" data-view="categories" id="view-categories">
@@ -242,7 +253,6 @@ tbody tr:last-child td{border-bottom:0}
   <div><h2>Операции</h2><p>Добавляй доходы и расходы в общую базу семейного бюджета.</p></div>
 </section>
 <section class="action-layout operation-forms">
-<section class="action-layout">
   <article class="action-card">
     <div class="action-number">01</div><h3>Добавить расход</h3><p>Категория, сумма и описание траты.</p>
     <form id="expenseForm" class="form-grid">
@@ -260,7 +270,6 @@ tbody tr:last-child td{border-bottom:0}
       <div class="form-field wide"><button class="button" type="submit">Записать доход</button></div>
     </form>
   </article>
-</section>
 </section>
 
 <section class="app-view" data-view="more" id="view-more">
@@ -304,7 +313,6 @@ tbody tr:last-child td{border-bottom:0}
   <button type="button" data-view-target="credits"><span class="tab-icon">₽</span><span class="tab-label">Кредиты</span></button>
   <button type="button" data-view-target="savings"><span class="tab-icon">◉</span><span class="tab-label">Копилка</span></button>
   <button type="button" data-view-target="operations"><span class="tab-icon">＋</span><span class="tab-label">Операции</span></button>
-  <button type="button" data-view-target="more"><span class="tab-icon">☰</span><span class="tab-label">Ещё</span></button>
 </nav>
 <div class="footer-wave" aria-hidden="true">
 <svg viewBox="0 0 1200 170" preserveAspectRatio="none" fill="none">
