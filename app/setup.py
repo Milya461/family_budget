@@ -17,6 +17,7 @@ CATEGORIES = {
 
 DEPRECATED_CATEGORIES = ("Личные покупки", "Непредвиденные")
 CATEGORY_SETUP_VERSION = "2026-10-category-groups-v2-expense-remap"
+SAVINGS_RESET_VERSION = "2026-10-26-reset-savings-on-request"
 
 
 async def ensure_categories():
@@ -29,6 +30,38 @@ async def ensure_categories():
         )
         """
     )
+
+    reset_version = await fetch_value(
+        "SELECT value FROM bot_settings WHERE key = ?",
+        "savings_reset_version",
+    )
+
+    if reset_version != SAVINGS_RESET_VERSION:
+        await execute(
+            """
+            UPDATE savings
+            SET balance = 0
+            WHERE id = 1
+            """
+        )
+
+        await execute(
+            """
+            DELETE FROM monthly_allocations
+            WHERE source = 'savings'
+              AND month = strftime('%Y-%m', 'now', '+3 hours')
+            """
+        )
+
+        await execute(
+            """
+            INSERT INTO bot_settings (key, value)
+            VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            "savings_reset_version",
+            SAVINGS_RESET_VERSION,
+        )
 
     version = await fetch_value(
         "SELECT value FROM bot_settings WHERE key = ?",
@@ -134,7 +167,6 @@ async def ensure_categories():
         "category_setup_version",
         CATEGORY_SETUP_VERSION,
     )
-
 
 
 DEBTS = {
