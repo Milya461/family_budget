@@ -1,4 +1,4 @@
-name: Python syntax check
+name: Python and web interface syntax check
 
 on:
   push:
@@ -18,3 +18,18 @@ jobs:
           python-version: "3.12"
       - name: Compile Worker and application modules
         run: python -m compileall -q worker.py app
+      - name: Extract web interface script
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          source = Path("app/web_app.py").read_text(encoding="utf-8")
+          html = source.split("WEB_APP_HTML = r'''", 1)[1].rsplit("'''", 1)[0]
+          match = re.search(r"<script>(.*?)</script>", html, flags=re.S)
+          if not match:
+              raise SystemExit("No inline application script found")
+          Path("/tmp/family-budget-app.js").write_text(match.group(1), encoding="utf-8")
+          PY
+      - name: Check web interface JavaScript
+        run: node --check /tmp/family-budget-app.js
