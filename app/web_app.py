@@ -400,7 +400,8 @@ async function submitForm(form, path, buildBody, successMessage, onSuccess){
     var result=await api(path,{method:'POST',body:JSON.stringify(body)});
     form.reset();
     if(onSuccess)onSuccess(result);
-    showToast(successMessage);
+    var warning=result&&(result.allocation_warning||(result.result&&result.result.allocation_warning));
+    showToast(warning?successMessage+' '+warning:successMessage);
     try{await reload();}catch(refreshError){showToast(successMessage+' Обнови страницу, чтобы проверить новый остаток.');}
   }
   catch(error){showToast(error.message);}
