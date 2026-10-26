@@ -9,9 +9,9 @@ from urllib.parse import parse_qs, urlparse
 
 from workers import Response
 
-from app.allocation import get_monthly_budget_summary
-from app.budget import add_income, get_monthly_report, save_expense
-from app.db import execute, execute_many, fetch_all, fetch_one, fetch_value
+from app.allocation import allocate_income_remainder, get_monthly_budget_summary
+from app.budget import get_monthly_report
+from app.db import execute, execute_many, fetch_all, fetch_one, fetch_value, to_python
 from app.payment_flow import get_current_balance, get_moscow_today, record_actual_payment
 from app.rebalancing import ensure_rebalancing_tables, mark_stock_purchase
 
@@ -43,6 +43,26 @@ def _get_password(env):
         return None
     value = str(value)
     return value if len(value) >= 12 else None
+
+
+async def _get_database_user_id():
+    user_id = await fetch_value(
+        "SELECT id FROM users ORDER BY id LIMIT 1"
+    )
+    if user_id is None:
+        raise ValueError(
+            "В общей базе пока нет пользователя. Один раз запусти старого бота командой /start."
+        )
+    return int(user_id)
+
+
+def _operation_id_from_result(result):
+    result = to_python(result)
+    if isinstance(result, dict):
+        meta = result.get("meta") or {}
+        if isinstance(meta, dict):
+            return meta.get("last_row_id")
+    return None
 
 
 def _session_signature(password, expires):
@@ -351,15 +371,37 @@ async def handle_web_api(path, request, env):
                 raise ValueError("Сумма расхода должна быть больше нуля.")
             if not category:
                 raise ValueError("Выбери категорию расхода.")
-            result = await save_expense(
-                telegram_id=int(body.get("telegram_id") or 0),
-                amount=amount,
-                category_name=category,
-                description=description,
+
+            user_id = await _get_database_user_id()
+            category_id = await fetch_value(
+                "SELECT id FROM categories WHERE name = ? AND is_active = 1",
+                category,
             )
-            if not result.get("success"):
-                return _json({"error": result.get("error", "Не удалось записать расход.")}, 400)
-            return _json({"success": True, "result": result, "balance": await get_current_balance()})
+            if category_id is None:
+                raise ValueError("Категория не найдена.")
+            operation_date = get_moscow_today().isoformat()
+            insert_result = await execute(
+                """
+                INSERT INTO operations (
+                    user_id, operation_type, amount, category_id,
+                    description, operation_date
+                )
+                VALUES (?, 'expense', ?, ?, ?, ?)
+                """,
+                user_id, amount, category_id, description, operation_date,
+            )
+            operation_id = _operation_id_from_result(insert_result)
+            return _json({
+                "success": True,
+                "result": {
+                    "operation_id": operation_id,
+                    "operation_type": "expense",
+                    "amount": amount,
+                    "category": category,
+                    "description": description,
+                },
+                "balance": await get_current_balance(),
+            })
 
         if path == "/api/income" and method == "POST":
             body = await request.json()
@@ -367,15 +409,53 @@ async def handle_web_api(path, request, env):
             description = str(body.get("description") or "Доход").strip()[:100] or "Доход"
             if amount <= 0:
                 raise ValueError("Сумма дохода должна быть больше нуля.")
-            # Входящие деньги записываются тем же способом, что и в Telegram-боте.
-            result = await add_income(
-                telegram_id=int(body.get("telegram_id") or 0),
-                amount=amount,
-                description=description,
+
+            user_id = await _get_database_user_id()
+            operation_date = get_moscow_today().isoformat()
+            insert_result = await execute(
+                """
+                INSERT INTO operations (
+                    user_id, operation_type, amount, description, operation_date
+                )
+                VALUES (?, 'income', ?, ?, ?)
+                """,
+                user_id, amount, description, operation_date,
             )
-            if not result.get("success"):
-                return _json({"error": result.get("error", "Не удалось записать доход.")}, 400)
-            return _json({"success": True, "result": result, "balance": await get_current_balance()})
+            operation_id = _operation_id_from_result(insert_result)
+            if operation_id is None:
+                return _json({
+                    "success": True,
+                    "result": {"amount": amount, "description": description},
+                    "allocation_warning": (
+                        "Доход записан, но не удалось получить его ID для распределения. "
+                        "Не записывай этот доход повторно."
+                    ),
+                    "balance": await get_current_balance(),
+                })
+
+            result = {"success": True, "amount": amount}
+            try:
+                allocation = await allocate_income_remainder(
+                    amount=amount,
+                    allocation_date=date.fromisoformat(operation_date),
+                    allocation_key=f"income:{operation_id}",
+                )
+                result["allocation"] = allocation
+                if not allocation.get("success"):
+                    result["allocation_warning"] = allocation.get(
+                        "error", "Не удалось распределить доход."
+                    )
+            except Exception as allocation_error:
+                result["allocation_warning"] = (
+                    "Доход записан, но распределение не завершено: "
+                    f"{type(allocation_error).__name__}: {allocation_error}. "
+                    "Не записывай этот доход повторно."
+                )
+            return _json({
+                "success": True,
+                "result": result,
+                "balance": await get_current_balance(),
+            })
 
         if path == "/api/savings" and method == "POST":
             body = await request.json()
