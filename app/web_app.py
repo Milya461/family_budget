@@ -15,6 +15,34 @@ button,input,select,textarea{font:inherit;color:inherit}
 button{cursor:pointer}
 a{color:inherit}
 .shell{width:min(1200px,100%);margin:0 auto;padding:0 26px}
+body{padding-bottom:calc(96px + env(safe-area-inset-bottom))}
+.app-view{display:none;min-height:52vh}
+.app-view.active{display:block}
+.app-view.active .section-heading:first-child{padding-top:24px}
+.home-shortcuts{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:25px 0 14px;border-bottom:1px solid var(--line)}
+.home-shortcut-copy{flex:1 1 100%;padding-bottom:8px}
+.home-shortcut-copy h2{font-size:clamp(22px,4vw,34px);line-height:1;margin:11px 0 7px;letter-spacing:-.06em;text-transform:uppercase}
+.home-shortcut-copy p{margin:0;font-size:11px;color:var(--muted)}
+.home-shortcuts .pill{font:inherit;font-size:10px}
+.category-only{padding-bottom:10px}
+.category-only>.category-list{margin-top:4px}
+.savings-layout,.balance-layout{width:min(740px,100%);padding:22px 0}
+.savings-layout .line-card,.balance-layout .line-card{width:100%;max-width:620px}
+.savings-layout .line-card h3,.balance-layout .line-card h3{font-size:18px}
+.operation-forms{grid-template-columns:repeat(2,minmax(0,1fr));gap:26px}
+.operation-forms .action-card{padding:22px 20px 24px 0;margin:0}
+.operation-forms .action-card:nth-child(2){border-right:0}
+.operation-forms .action-number{font-size:42px}
+#view-more #history{margin-top:8px}
+.bottom-nav{position:fixed;z-index:35;left:50%;transform:translateX(-50%);bottom:0;width:min(720px,100%);display:grid;grid-template-columns:repeat(6,minmax(0,1fr));padding:8px 8px calc(8px + env(safe-area-inset-bottom));background:rgba(228,228,225,.97);border:1px solid var(--line);border-bottom:0;box-shadow:0 -7px 26px rgba(0,0,0,.06);backdrop-filter:blur(12px)}
+.bottom-nav button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:55px;padding:7px 3px 5px;border:0;border-top:2px solid transparent;background:transparent;color:var(--muted);font-size:9px;letter-spacing:.01em}
+.bottom-nav button .tab-icon{font-size:17px;line-height:1;color:var(--ink);font-weight:600}
+.bottom-nav button .tab-label{white-space:nowrap}
+.bottom-nav button.active{border-top-color:var(--ink);background:rgba(255,255,255,.35);color:var(--ink);font-weight:700}
+.bottom-nav button:focus-visible{outline:2px solid var(--ink);outline-offset:-2px}
+#view-more .table-wrap{margin-bottom:18px}
+#view-more .section-heading{scroll-margin-top:15px}
+
 .topbar{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:22px 0;border-bottom:1px solid var(--line)}
 .brand{font-size:14px;font-weight:900;letter-spacing:.04em;line-height:1.1}
 .brand small{display:block;margin-top:5px;font-size:9px;font-weight:500;letter-spacing:.16em}
@@ -113,12 +141,12 @@ tbody tr:last-child td{border-bottom:0}
 <div class="shell" id="appShell">
 <header class="topbar">
   <div class="brand">FAM / BUDGET<small>СЕМЕЙНАЯ ФИНАНСОВАЯ СИСТЕМА</small></div>
-  <nav class="nav" aria-label="Навигация">
-    <a href="#overview">Обзор</a><a href="#actions">Операции</a><a href="#payments">Платежи</a><a href="#history">История</a>
+  <nav class="nav" aria-label="Управление аккаунтом">
     <button class="logout" id="logoutButton" type="button">Выйти ↗</button>
   </nav>
 </header>
 <main>
+<section class="app-view active" data-view="home" id="view-home">
 <section class="hero" id="overview">
   <div class="eyebrow">Личный финансовый кабинет / <span id="heroMonth">Текущий месяц</span></div>
   <svg class="wave" viewBox="0 0 680 300" fill="none" aria-hidden="true">
@@ -151,23 +179,52 @@ tbody tr:last-child td{border-bottom:0}
   <h1>Деньги<span>под контролем</span></h1>
   <div class="hero-bottom">
     <p>Один экран для реальных денег, категорий, обязательных платежей и накоплений. Данные сохраняются в общей базе семейного бюджета.</p>
-    <a class="pill primary" href="#actions">Управлять бюджетом ↘</a>
+    <button class="pill primary" type="button" data-view-target="operations">Управлять бюджетом ↘</button>
   </div>
 </section>
+
 <section class="stats" aria-label="Главные показатели">
   <div class="stat"><div class="label">Реальные деньги</div><div class="value" id="mainBalance">—</div><div class="note">Основной счёт после копилки</div></div>
   <div class="stat"><div class="label">Накоплено</div><div class="value" id="savingsBalance">—</div><div class="note" id="savingsNote">Копилка</div></div>
   <div class="stat"><div class="label">Потрачено за месяц</div><div class="value" id="spentTotal">—</div><div class="note" id="spentNote">Все категории</div></div>
   <div class="stat"><div class="label">Обязательные платежи</div><div class="value" id="paymentsCount">—</div><div class="note" id="paymentsNote">За выбранный месяц</div></div>
 </section>
+
+<section class="home-shortcuts">
+  <div class="home-shortcut-copy"><span class="eyebrow">ТВОИ ДЕНЬГИ · ОДИН КАБИНЕТ</span><h2>Что проверим сегодня?</h2><p>Остальные данные разложены по разделам в нижнем меню.</p></div>
+  <button class="pill" type="button" data-view-target="credits">Кредиты ↗</button>
+  <button class="pill" type="button" data-view-target="savings">Копилка ↗</button>
+  <button class="pill" type="button" data-view-target="operations">Добавить операцию ↗</button>
+</section>
+</section>
+
+<section class="app-view" data-view="categories" id="view-categories">
 <section class="section-heading">
   <div><h2>Бюджет по категориям</h2><p>Фактические траты и месячные лимиты</p></div>
   <div class="month-control"><label for="monthPicker" style="margin:0">Период</label><input type="month" id="monthPicker" aria-label="Выбрать месяц"></div>
 </section>
-<section class="content-grid">
-  <div><div class="category-list" id="categoryList"><div class="empty">Загружаю категории…</div></div></div>
-  <aside class="side-stack">
-    <div class="line-card">
+<section class="category-only">
+<div><div class="category-list" id="categoryList"><div class="empty">Загружаю категории…</div></div>
+</section>
+</section>
+
+<section class="app-view" data-view="credits" id="view-credits">
+<section class="section-heading">
+  <div><h2>Кредиты</h2><p>Кредитная карта, автокредит, ипотека и обязательные платежи. Здесь можно внести фактическую оплату.</p></div>
+</section>
+<section class="section-heading" id="payments">
+  <div><h2>Обязательные платежи</h2><p>Показываются только уже существующие платежи в базе — новые будущие события не создаются.</p></div>
+</section>
+<section class="payment-list" id="paymentList"><div class="empty">Загружаю платежи…</div></section>
+
+</section>
+
+<section class="app-view" data-view="savings" id="view-savings">
+<section class="section-heading">
+  <div><h2>Копилка</h2><p>Ты сама выбираешь сумму для накоплений. Автоматически ничего не откладывается.</p></div>
+</section>
+<section class="savings-layout">
+<div class="line-card">
       <h3>🐷 Копилка</h3><p class="sub">Пополняйте на выбранную вами сумму. Автоматический выбор суммы для этого действия не используется.</p>
       <div class="metric-line"><span>Накоплено всего</span><strong id="savingsAmountLarge">—</strong></div>
       <div class="metric-line"><span>Цель месяца</span><strong id="savingsTarget">—</strong></div>
@@ -177,19 +234,14 @@ tbody tr:last-child td{border-bottom:0}
         <div class="form-field wide"><button class="button primary" type="submit">Пополнить копилку +</button></div>
       </form>
     </div>
-    <div class="line-card">
-      <h3>Реальные деньги</h3><p class="sub">Укажите сумму, которая действительно есть на основном счёте. История расходов и доходов останется без изменений.</p>
-      <form id="balanceForm" class="form-grid">
-        <div class="form-field wide"><label for="balanceInput">Фактический остаток, ₽</label><input id="balanceInput" type="number" min="0" step="0.01" placeholder="Введите сумму" required></div>
-        <div class="form-field wide"><button class="button" type="submit">Сохранить реальный остаток</button></div>
-      </form>
-      <div class="metric-line" style="margin-top:10px"><span>Последняя корректировка</span><strong id="lastAdjustment">—</strong></div>
-    </div>
-  </aside>
 </section>
-<section class="section-heading" id="actions">
-  <div><h2>Операции</h2><p>Записывайте поступления и расходы напрямую в общую базу</p></div>
 </section>
+
+<section class="app-view" data-view="operations" id="view-operations">
+<section class="section-heading">
+  <div><h2>Операции</h2><p>Добавляй доходы и расходы в общую базу семейного бюджета.</p></div>
+</section>
+<section class="action-layout operation-forms">
 <section class="action-layout">
   <article class="action-card">
     <div class="action-number">01</div><h3>Добавить расход</h3><p>Категория, сумма и описание траты.</p>
@@ -208,20 +260,23 @@ tbody tr:last-child td{border-bottom:0}
       <div class="form-field wide"><button class="button" type="submit">Записать доход</button></div>
     </form>
   </article>
-  <article class="action-card">
-    <div class="action-number">03</div><h3>Копилка вручную</h3><p>Вы сами выбираете размер перевода в накопления.</p>
-    <div style="font-size:12px;margin:5px 0 18px">Без создания дохода и без задвоения операций.</div>
-    <a class="button" href="#savingsForm" style="display:inline-block;text-decoration:none;text-align:center;width:100%">Указать сумму ↑</a>
-  </article>
-  <article class="action-card">
-    <div class="action-number">04</div><h3>Изменить остаток</h3><p>Исправить сумму реальных денег без подмены дохода или расхода.</p>
-    <a class="button" href="#balanceForm" style="display:inline-block;text-decoration:none;text-align:center;width:100%">Изменить сумму ↑</a>
-  </article>
 </section>
-<section class="section-heading" id="payments">
-  <div><h2>Обязательные платежи</h2><p>Показываются только уже существующие платежи в базе — новые будущие события не создаются.</p></div>
 </section>
-<section class="payment-list" id="paymentList"><div class="empty">Загружаю платежи…</div></section>
+
+<section class="app-view" data-view="more" id="view-more">
+<section class="section-heading">
+  <div><h2>Ещё</h2><p>Реальный остаток, история операций и корректировки баланса.</p></div>
+</section>
+<section class="balance-layout">
+<div class="line-card">
+      <h3>Реальные деньги</h3><p class="sub">Укажите сумму, которая действительно есть на основном счёте. История расходов и доходов останется без изменений.</p>
+      <form id="balanceForm" class="form-grid">
+        <div class="form-field wide"><label for="balanceInput">Фактический остаток, ₽</label><input id="balanceInput" type="number" min="0" step="0.01" placeholder="Введите сумму" required></div>
+        <div class="form-field wide"><button class="button" type="submit">Сохранить реальный остаток</button></div>
+      </form>
+      <div class="metric-line" style="margin-top:10px"><span>Последняя корректировка</span><strong id="lastAdjustment">—</strong></div>
+    </div>
+</section>
 <section class="section-heading" id="history">
   <div><h2>История операций</h2><p>Доходы, расходы и назначения зафиксированных корректировок</p></div>
 </section>
@@ -240,7 +295,17 @@ tbody tr:last-child td{border-bottom:0}
 <tbody id="adjustmentTable"><tr><td colspan="5" class="empty">Нет корректировок</td></tr></tbody>
 </table>
 </div>
+
+</section>
 </main>
+<nav class="bottom-nav" id="bottomNav" aria-label="Разделы приложения">
+  <button class="active" type="button" data-view-target="home" aria-current="page"><span class="tab-icon">⌂</span><span class="tab-label">Главная</span></button>
+  <button type="button" data-view-target="categories"><span class="tab-icon">▦</span><span class="tab-label">Категории</span></button>
+  <button type="button" data-view-target="credits"><span class="tab-icon">₽</span><span class="tab-label">Кредиты</span></button>
+  <button type="button" data-view-target="savings"><span class="tab-icon">◉</span><span class="tab-label">Копилка</span></button>
+  <button type="button" data-view-target="operations"><span class="tab-icon">＋</span><span class="tab-label">Операции</span></button>
+  <button type="button" data-view-target="more"><span class="tab-icon">☰</span><span class="tab-label">Ещё</span></button>
+</nav>
 <div class="footer-wave" aria-hidden="true">
 <svg viewBox="0 0 1200 170" preserveAspectRatio="none" fill="none">
 <defs><linearGradient id="waveTint" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#111"/><stop offset=".53" stop-color="#8caaa3"/><stop offset="1" stop-color="#a9a1bc"/></linearGradient></defs>
@@ -301,6 +366,22 @@ async function api(path, options){
 }
 function currentMonth(){return new Date().toISOString().slice(0,7);}
 function showLogin(){ $('loginOverlay').classList.add('show'); $('loginError').textContent=''; }
+
+function showView(viewName){
+  var allowed=['home','categories','credits','savings','operations','more'];
+  if(allowed.indexOf(viewName)<0)viewName='home';
+  Array.prototype.forEach.call(document.querySelectorAll('.app-view'),function(view){
+    var active=view.getAttribute('data-view')===viewName;
+    view.classList.toggle('active',active);
+    view.setAttribute('aria-hidden',active?'false':'true');
+  });
+  Array.prototype.forEach.call($('bottomNav').querySelectorAll('[data-view-target]'),function(button){
+    var active=button.getAttribute('data-view-target')===viewName;
+    button.classList.toggle('active',active);
+    if(active)button.setAttribute('aria-current','page');else button.removeAttribute('aria-current');
+  });
+  window.scrollTo({top:0,behavior:'auto'});
+}
 function fillCategories(categories){
   $('expenseCategory').innerHTML='<option value="">Выбрать категорию</option>'+categories.map(function(c){return '<option value="'+escapeHtml(c.name)+'">'+escapeHtml(c.name)+'</option>';}).join('');
 }
@@ -414,10 +495,17 @@ $('loginForm').addEventListener('submit',async function(event){
     var data={};try{data=await response.json();}catch(e){}
     if(!response.ok){$('loginError').textContent=data.error||'Не удалось войти.';return;}
     $('loginOverlay').classList.remove('show');$('passwordInput').value='';$('loginForm').style.display='grid';$('loginMessage').textContent='Введи пароль веб-приложения, чтобы открыть семейный бюджет.';
-    await reload();showToast('Вход выполнен.');
+    showView('home');await reload();showToast('Вход выполнен.');
   }catch(e){$('loginError').textContent='Не удалось подключиться. Попробуй ещё раз.';}
 });
 $('logoutButton').addEventListener('click',async function(){try{await api('/api/logout',{method:'POST',body:'{}'});}catch(e){}showLogin();});
+
+Array.prototype.forEach.call(document.querySelectorAll('[data-view-target]'),function(button){
+  button.addEventListener('click',function(event){
+    event.preventDefault();
+    showView(button.getAttribute('data-view-target'));
+  });
+});
 $('monthPicker').addEventListener('change',async function(){try{setBusy(true);await reload($('monthPicker').value);}catch(error){showToast(error.message);}finally{setBusy(false);}});
 $('expenseForm').addEventListener('submit',function(event){event.preventDefault();submitForm(event.currentTarget,'/api/expense',function(){return {amount:$('expenseAmount').value,category:$('expenseCategory').value,description:$('expenseDescription').value};},'Расход записан.');});
 $('incomeForm').addEventListener('submit',function(event){event.preventDefault();submitForm(event.currentTarget,'/api/income',function(){return {amount:$('incomeAmount').value,description:$('incomeDescription').value};},'Доход записан.');});
