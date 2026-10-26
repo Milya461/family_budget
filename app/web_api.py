@@ -311,6 +311,47 @@ async def _set_real_balance(body):
     }
 
 
+async def _category_expense_details(category_name, month):
+    """Returns every expense in a category and the matching monthly total."""
+    category_id = await fetch_value(
+        "SELECT id FROM categories WHERE name = ? AND is_active = 1",
+        category_name,
+    )
+    if category_id is None:
+        return None
+
+    operations = await fetch_all(
+        """
+        SELECT id, amount, description, operation_date
+        FROM operations
+        WHERE operation_type = 'expense'
+          AND category_id = ?
+          AND substr(operation_date, 1, 7) = ?
+        ORDER BY operation_date DESC, id DESC
+        """,
+        category_id,
+        month,
+    )
+    total = await fetch_value(
+        """
+        SELECT COALESCE(SUM(amount), 0)
+        FROM operations
+        WHERE operation_type = 'expense'
+          AND category_id = ?
+          AND substr(operation_date, 1, 7) = ?
+        """,
+        category_id,
+        month,
+    )
+
+    return {
+        "category": category_name,
+        "month": month,
+        "total": round(float(total or 0), 2),
+        "operations": operations,
+    }
+
+
 async def handle_web_api(path, request, env):
     method = (request.method or "GET").upper()
 
@@ -364,6 +405,21 @@ async def handle_web_api(path, request, env):
             if not VALID_MONTH.fullmatch(month):
                 return _json({"error": "Некорректный месяц."}, 400)
             return _json(await _dashboard(month))
+
+        if path == "/api/category-expenses" and method == "GET":
+            parsed = urlparse(request.url)
+            params = parse_qs(parsed.query)
+            category_name = (params.get("category") or [""])[0].strip()
+            month = (params.get("month") or [get_moscow_today().strftime("%Y-%m")])[0]
+            if not VALID_MONTH.fullmatch(month):
+                return _json({"error": "Некорректный месяц."}, 400)
+            if not category_name or len(category_name) > 100:
+                return _json({"error": "Не выбрана категория."}, 400)
+
+            details = await _category_expense_details(category_name, month)
+            if details is None:
+                return _json({"error": "Категория не найдена."}, 404)
+            return _json(details)
 
         if path == "/api/expense" and method == "POST":
             body = await request.json()
