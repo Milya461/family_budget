@@ -313,22 +313,17 @@ def distribute_amount(
         for category in result_categories
     )
 
+    # Накопления не распределяются автоматически.
+    # Семья сама указывает сумму перевода в копилку вручную.
     remaining_amount = max(
         amount - allocated_to_categories,
         0,
     )
 
-    savings_allocation = min(
-        savings_remaining,
-        remaining_amount,
-    )
-
-    remaining_amount -= savings_allocation
-
     return {
         "categories": result_categories,
-        "savings": savings_allocation,
-        "unallocated": max(remaining_amount, 0),
+        "savings": 0,
+        "unallocated": remaining_amount,
     }
 
 
