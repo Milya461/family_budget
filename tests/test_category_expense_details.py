@@ -1,5 +1,13 @@
 import asyncio
+import sys
+import types
 from unittest.mock import AsyncMock
+
+# Importing Cloudflare's workers package outside Pyodide requires the JS runtime.
+# The helper tested here only needs the Response symbol at import time.
+workers_stub = types.ModuleType("workers")
+workers_stub.Response = type("Response", (), {})
+sys.modules["workers"] = workers_stub
 
 from app import web_api
 
