@@ -204,7 +204,7 @@ tbody tr:last-child td{border-bottom:0}
   <div class="month-control"><label for="monthPicker" style="margin:0">Период</label><input type="month" id="monthPicker" aria-label="Выбрать месяц"></div>
 </section>
 <section class="category-only">
-<div><div class="category-list" id="categoryList"><div class="empty">Загружаю категории…</div></div>
+<div class="category-list" id="categoryList"><div class="empty">Загружаю категории…</div></div>
 </section>
 </section>
 
