@@ -381,7 +381,7 @@ tbody tr:last-child td{border-bottom:0}
 <script>
 (function(){
 'use strict';
-var state = {data:null, month:'', busy:false};
+var state = {data:null, month:'', busy:false, categoryRequestId:0};
 var $ = function(id){return document.getElementById(id);};
 var numberFormat = new Intl.NumberFormat('ru-RU',{minimumFractionDigits:0,maximumFractionDigits:2});
 function money(value){return numberFormat.format(Number(value||0))+' ₽';}
@@ -462,30 +462,35 @@ function renderCategories(categories){
   });
   renderCategoryDetail('');
 }
-function renderCategoryDetail(categoryName){
+async function renderCategoryDetail(categoryName){
   var detail=$('categoryDetail');
+  var requestId=++state.categoryRequestId;
   if(!categoryName){detail.classList.remove('show');return;}
-  var operations=(state.data&&state.data.operations)||[];
-  var items=operations.filter(function(o){
-    return o.operation_type==='expense'&&o.category_name===categoryName&&String(o.operation_date||'').slice(0,7)===String(state.month||'');
-  }).sort(function(a,b){
-    var dateA=String(a.operation_date||'');
-    var dateB=String(b.operation_date||'');
-    if(dateA!==dateB)return dateB.localeCompare(dateA);
-    return Number(b.id||0)-Number(a.id||0);
-  });
-  var total=items.reduce(function(sum,item){return sum+Number(item.amount||0);},0);
+  var selectedMonth=String(state.month||'');
   $('categoryDetailTitle').textContent=categoryName;
-  $('categoryDetailSubtitle').textContent='Расходы за '+String(state.month||'').replace('-', ' / ');
-  $('categoryDetailTotal').textContent=money(total);
-  $('categoryExpenseList').innerHTML=items.length?items.map(function(item){
-    var date=String(item.operation_date||'').split('-');
-    var dateText=date.length===3?date[2]+'.'+date[1]+'.'+date[0]:String(item.operation_date||'');
-    var description=item.description||'Без описания';
-    return '<div class="category-expense"><div class="category-expense-date">'+escapeHtml(dateText)+'</div><div class="category-expense-description">'+escapeHtml(description)+'</div><div class="category-expense-amount">−'+money(item.amount)+'</div></div>';
-  }).join(''):'<div class="empty">В этой категории за выбранный месяц расходов нет.</div>';
+  $('categoryDetailSubtitle').textContent='Расходы за '+selectedMonth.replace('-', ' / ');
+  $('categoryDetailTotal').textContent='Загрузка…';
+  $('categoryExpenseList').innerHTML='<div class="empty">Загружаю все расходы категории…</div>';
   detail.classList.add('show');
   window.requestAnimationFrame(function(){detail.scrollIntoView({behavior:'smooth',block:'start'});});
+  try{
+    var path='/api/category-expenses?category='+encodeURIComponent(categoryName)+'&month='+encodeURIComponent(selectedMonth);
+    var result=await api(path,{method:'GET',headers:{}});
+    if(requestId!==state.categoryRequestId||selectedMonth!==String(state.month||''))return;
+    var items=result.operations||[];
+    $('categoryDetailTotal').textContent=money(result.total);
+    $('categoryExpenseList').innerHTML=items.length?items.map(function(item){
+      var date=String(item.operation_date||'').split('-');
+      var dateText=date.length===3?date[2]+'.'+date[1]+'.'+date[0]:String(item.operation_date||'');
+      var description=item.description||'Без описания';
+      return '<div class="category-expense"><div class="category-expense-date">'+escapeHtml(dateText)+'</div><div class="category-expense-description">'+escapeHtml(description)+'</div><div class="category-expense-amount">−'+money(item.amount)+'</div></div>';
+    }).join(''):'<div class="empty">В этой категории за выбранный месяц расходов нет.</div>';
+  }catch(error){
+    if(requestId!==state.categoryRequestId)return;
+    $('categoryDetailTotal').textContent='—';
+    $('categoryExpenseList').innerHTML='<div class="empty">Не удалось загрузить расходы. Попробуй ещё раз.</div>';
+    showToast(error.message);
+  }
 }
 function renderPayments(payments){
   if(!payments.length){$('paymentList').innerHTML='<div class="empty">В базе нет обязательных платежей за выбранный месяц. Будущие события автоматически не создавались.</div>';return;}
