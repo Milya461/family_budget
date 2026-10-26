@@ -343,6 +343,18 @@ async def get_monthly_report(
     if month is None:
         month = get_moscow_today().strftime("%Y-%m")
 
+    await execute(
+        """
+        CREATE TABLE IF NOT EXISTS balance_adjustments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            delta REAL NOT NULL,
+            previous_balance REAL NOT NULL,
+            target_balance REAL NOT NULL,
+            note TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
     await ensure_rebalancing_tables()
 
     month_operations = await fetch_one(
@@ -635,10 +647,18 @@ async def get_monthly_report(
         0,
     )
 
+    balance_adjustments_total = await fetch_value(
+        """
+        SELECT COALESCE(SUM(delta), 0)
+        FROM balance_adjustments
+        """
+    ) or 0
+
     main_account = (
         total_income
         - total_expenses
         - savings_balance
+        + float(balance_adjustments_total or 0)
     )
 
     free_after_targets = (
