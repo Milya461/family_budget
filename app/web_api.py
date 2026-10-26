@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+import math
 import re
 import time
 import traceback
@@ -115,7 +116,7 @@ def _number(value, field_name="Сумма"):
         number = float(str(value).replace(" ", "").replace(",", "."))
     except (TypeError, ValueError):
         raise ValueError(f"{field_name}: введи число.")
-    if number < 0 or number > 1_000_000_000:
+    if not math.isfinite(number) or number < 0 or number > 1_000_000_000:
         raise ValueError(f"{field_name}: значение вне допустимого диапазона.")
     return round(number, 2)
 
