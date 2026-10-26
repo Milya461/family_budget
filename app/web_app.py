@@ -211,11 +211,11 @@ tbody tr:last-child td{border-bottom:0}
   <article class="action-card">
     <div class="action-number">03</div><h3>Копилка вручную</h3><p>Вы сами выбираете размер перевода в накопления.</p>
     <div style="font-size:12px;margin:5px 0 18px">Без создания дохода и без задвоения операций.</div>
-    <a class="button" href="#overview" style="display:inline-block;text-decoration:none;text-align:center;width:100%">Указать сумму ↑</a>
+    <a class="button" href="#savingsForm" style="display:inline-block;text-decoration:none;text-align:center;width:100%">Указать сумму ↑</a>
   </article>
   <article class="action-card">
     <div class="action-number">04</div><h3>Изменить остаток</h3><p>Исправить сумму реальных денег без подмены дохода или расхода.</p>
-    <a class="button" href="#overview" style="display:inline-block;text-decoration:none;text-align:center;width:100%">Изменить сумму ↑</a>
+    <a class="button" href="#balanceForm" style="display:inline-block;text-decoration:none;text-align:center;width:100%">Изменить сумму ↑</a>
   </article>
 </section>
 <section class="section-heading" id="payments">
@@ -377,9 +377,17 @@ async function reload(month){
   var data=await api('/api/dashboard?month='+encodeURIComponent(selected),{method:'GET',headers:{}});
   render(data);
 }
-async function submitForm(form, path, buildBody, successMessage){
+async function submitForm(form, path, buildBody, successMessage, onSuccess){
   if(state.busy)return;
-  try{setBusy(true);var body=buildBody();await api(path,{method:'POST',body:JSON.stringify(body)});form.reset();await reload();showToast(successMessage);}
+  try{
+    setBusy(true);
+    var body=buildBody();
+    var result=await api(path,{method:'POST',body:JSON.stringify(body)});
+    form.reset();
+    if(onSuccess)onSuccess(result);
+    showToast(successMessage);
+    try{await reload();}catch(refreshError){showToast(successMessage+' Обнови страницу, чтобы проверить новый остаток.');}
+  }
   catch(error){showToast(error.message);}
   finally{setBusy(false);}
 }
@@ -397,9 +405,11 @@ $('logoutButton').addEventListener('click',async function(){try{await api('/api/
 $('monthPicker').addEventListener('change',async function(){try{setBusy(true);await reload($('monthPicker').value);}catch(error){showToast(error.message);}finally{setBusy(false);}});
 $('expenseForm').addEventListener('submit',function(event){event.preventDefault();submitForm(event.currentTarget,'/api/expense',function(){return {amount:$('expenseAmount').value,category:$('expenseCategory').value,description:$('expenseDescription').value};},'Расход записан.');});
 $('incomeForm').addEventListener('submit',function(event){event.preventDefault();submitForm(event.currentTarget,'/api/income',function(){return {amount:$('incomeAmount').value,description:$('incomeDescription').value};},'Доход записан.');});
+var pendingSavingsRequestId='';
 $('savingsForm').addEventListener('submit',function(event){
   event.preventDefault();
-  submitForm(event.currentTarget,'/api/savings',function(){return {amount:$('savingsInput').value,request_id:window.crypto&&crypto.randomUUID?crypto.randomUUID():('req_'+Date.now()+'_'+Math.random().toString(36).slice(2))};},'Сумма вручную добавлена в копилку.');
+  if(!pendingSavingsRequestId)pendingSavingsRequestId=window.crypto&&window.crypto.randomUUID?window.crypto.randomUUID():('req_'+Date.now()+'_'+Math.random().toString(36).slice(2));
+  submitForm(event.currentTarget,'/api/savings',function(){return {amount:$('savingsInput').value,request_id:pendingSavingsRequestId};},'Пополнение копилки подтверждено.',function(){pendingSavingsRequestId='';});
 });
 $('balanceForm').addEventListener('submit',function(event){event.preventDefault();var target=Number($('balanceInput').value);if(!Number.isFinite(target)||target<0){showToast('Введи реальный остаток не меньше нуля.');return;}if(!window.confirm('Установить реальный остаток '+money(target)+'? История доходов и расходов не изменится.'))return;submitForm(event.currentTarget,'/api/balance',function(){return {amount:target};},'Реальный остаток обновлён.');});
 (async function init(){
