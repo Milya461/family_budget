@@ -135,10 +135,12 @@ async def _dashboard(month):
             o.description,
             o.operation_date,
             c.name AS category_name,
-            d.name AS debt_name
+            d.name AS debt_name,
+            sp.months AS stock_months
         FROM operations o
         LEFT JOIN categories c ON c.id = o.category_id
         LEFT JOIN debts d ON d.id = o.debt_id
+        LEFT JOIN stock_purchases sp ON sp.operation_id = o.id
         ORDER BY o.operation_date DESC, o.id DESC
         LIMIT 40
         """
