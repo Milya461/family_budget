@@ -39,6 +39,7 @@ from app.rebalancing import (
 from app.scheduler import daily_income_check
 from app.daily_reminders import handle_daily_expenses_callback
 from app.parser import parse_operation, extract_amount
+from app.setup import ensure_categories
 from app.web_api import handle_web_api
 from app.web_app import WEB_APP_HTML
 
@@ -1640,6 +1641,7 @@ class Default(WorkerEntrypoint):
     async def fetch(self, request):
         configure_d1(self.env.DB)
         await ensure_runtime_tables()
+        await ensure_categories()
 
         url = urlparse(request.url)
 
