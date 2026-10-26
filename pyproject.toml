@@ -1,8 +1,19 @@
+[project]
 name = "family-budget"
 version = "0.1.0"
-description = "Family Budget Telegram Bot"
-requires-python = ">=3.11"
-
+description = "Family Budget Telegram Bot and Web App"
+requires-python = ">=3.13"
 dependencies = [
-    "workers-py>=1.9",
+    "aiogram>=3.22,<4",
+    "aiosqlite>=0.21,<1",
+    "APScheduler>=3.11,<4",
+    "python-dotenv>=1.1,<2",
+]
+
+[dependency-groups]
+dev = [
+    "workers-py>=1.72.0",
+    "workers-runtime-sdk",
+    "pytest>=8,<9",
+    "pytest-asyncio>=1,<2",
 ]
