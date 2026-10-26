@@ -358,6 +358,19 @@ async def get_event_summary(event_id: int):
 
 
 async def get_current_balance():
+    await execute(
+        """
+        CREATE TABLE IF NOT EXISTS balance_adjustments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            delta REAL NOT NULL,
+            previous_balance REAL NOT NULL,
+            target_balance REAL NOT NULL,
+            note TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
     operations_balance = await fetch_value(
         """
         SELECT
@@ -394,4 +407,15 @@ async def get_current_balance():
         """
     ) or 0
 
-    return operations_balance - savings_balance
+    adjustments_total = await fetch_value(
+        """
+        SELECT COALESCE(SUM(delta), 0)
+        FROM balance_adjustments
+        """
+    ) or 0
+
+    return (
+        float(operations_balance or 0)
+        + float(adjustments_total or 0)
+        - float(savings_balance or 0)
+    )
