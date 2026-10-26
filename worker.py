@@ -39,6 +39,8 @@ from app.rebalancing import (
 from app.scheduler import daily_income_check
 from app.daily_reminders import handle_daily_expenses_callback
 from app.parser import parse_operation, extract_amount
+from app.web_api import handle_web_api
+from app.web_app import WEB_APP_HTML
 
 
 CATEGORIES = [
@@ -266,6 +268,29 @@ async def ensure_runtime_tables():
             data TEXT NOT NULL DEFAULT '{}',
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
+    """)
+    await execute("""
+        CREATE TABLE IF NOT EXISTS balance_adjustments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            delta REAL NOT NULL,
+            previous_balance REAL NOT NULL,
+            target_balance REAL NOT NULL,
+            note TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await execute("""
+        CREATE TABLE IF NOT EXISTS manual_savings_moves (
+            request_id TEXT PRIMARY KEY,
+            amount REAL NOT NULL,
+            operation_date TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            status TEXT NOT NULL DEFAULT 'pending'
+        )
+    """)
+    await execute("""
+        INSERT OR IGNORE INTO savings (id, balance, monthly_target)
+        VALUES (1, 0, 23000)
     """)
 
 
@@ -1615,13 +1640,30 @@ class Default(WorkerEntrypoint):
         await ensure_runtime_tables()
 
         url = urlparse(request.url)
-        token = getattr(self.env, "BOT_TOKEN", None)
 
         if url.path == "/health":
             return Response.json({
                 "status": "ok",
                 "worker": "familu-budget",
             })
+
+        if url.path in ("/", "/app", "/app/"):
+            if (request.method or "GET").upper() != "GET":
+                return Response("Method not allowed", status=405)
+            return Response(
+                WEB_APP_HTML,
+                status=200,
+                headers={
+                    "Content-Type": "text/html; charset=utf-8",
+                    "Cache-Control": "no-store",
+                    "X-Content-Type-Options": "nosniff",
+                },
+            )
+
+        if url.path.startswith("/api/"):
+            return await handle_web_api(url.path, request, self.env)
+
+        token = getattr(self.env, "BOT_TOKEN", None)
 
         if not token:
             return Response(
