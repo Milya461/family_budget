@@ -1,4 +1,4 @@
-from app.db import execute
+from app.db import execute, fetch_value
 
 
 CATEGORIES = {
@@ -7,11 +7,68 @@ CATEGORIES = {
     "Питомцы": 6000,
     "Дом и быт": 5000,
     "Развлечения и кафе": 4000,
-    "Личные покупки": 4000,
     "Здоровье": 3000,
     "Подарки и праздники": 2000,
-    "Непредвиденные": 4000,
+    "Транспорт": 2500,
+    "Красота": 1000,
+    "Одежда": 4000,
+    "Подписки": 500,
 }
+
+DEPRECATED_CATEGORIES = ("Личные покупки", "Непредвиденные")
+CATEGORY_SETUP_VERSION = "2026-10-category-groups-v1"
+
+
+async def ensure_categories():
+    """Updates category names while keeping historic operations intact."""
+    await execute(
+        """
+        CREATE TABLE IF NOT EXISTS bot_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """
+    )
+
+    version = await fetch_value(
+        "SELECT value FROM bot_settings WHERE key = ?",
+        "category_setup_version",
+    )
+    if version == CATEGORY_SETUP_VERSION:
+        return
+
+    await execute(
+        """
+        UPDATE categories
+        SET is_active = 0
+        WHERE name IN (?, ?)
+        """,
+        *DEPRECATED_CATEGORIES,
+    )
+
+    for name, limit in CATEGORIES.items():
+        await execute(
+            """
+            INSERT INTO categories (name, monthly_limit, is_active)
+            VALUES (?, ?, 1)
+            ON CONFLICT(name) DO UPDATE SET
+                monthly_limit = excluded.monthly_limit,
+                is_active = 1
+            """,
+            name,
+            limit,
+        )
+
+    await execute(
+        """
+        INSERT INTO bot_settings (key, value)
+        VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """,
+        "category_setup_version",
+        CATEGORY_SETUP_VERSION,
+    )
+
 
 
 DEBTS = {
@@ -30,19 +87,7 @@ INCOME_PLANS = [
 
 
 async def setup():
-    for name, limit in CATEGORIES.items():
-        await execute(
-            """
-            INSERT OR IGNORE INTO categories (
-                name,
-                monthly_limit,
-                is_active
-            )
-            VALUES (?, ?, 1)
-            """,
-            name,
-            limit,
-        )
+    await ensure_categories()
 
     for name, amount in DEBTS.items():
         await execute(
