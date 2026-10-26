@@ -16,7 +16,7 @@ CATEGORIES = {
 }
 
 DEPRECATED_CATEGORIES = ("Личные покупки", "Непредвиденные")
-CATEGORY_SETUP_VERSION = "2026-10-category-groups-v1"
+CATEGORY_SETUP_VERSION = "2026-10-category-groups-v2-expense-remap"
 
 
 async def ensure_categories():
@@ -58,6 +58,72 @@ async def ensure_categories():
             name,
             limit,
         )
+
+    # Переносим уже записанные траты в новые категории по их описанию.
+    # Исторические операции не удаляются и их суммы не меняются.
+    beauty_patterns = (
+        "%маникюр%", "%Маникюр%", "%МАНИКЮР%",
+    )
+    await execute(
+        """
+        UPDATE operations
+        SET category_id = (
+            SELECT id FROM categories WHERE name = 'Красота' LIMIT 1
+        )
+        WHERE operation_type = 'expense'
+          AND description IS NOT NULL
+          AND (
+              description LIKE ?
+              OR description LIKE ?
+              OR description LIKE ?
+          )
+        """,
+        *beauty_patterns,
+    )
+
+    transport_patterns = (
+        "%такси%", "%Такси%", "%ТАКСИ%",
+        "%транспорт%", "%Транспорт%", "%ТРАНСПОРТ%",
+        "%платная дорога%", "%Платная дорога%", "%ПЛАТНАЯ ДОРОГА%",
+        "%платные дороги%", "%Платные дороги%", "%ПЛАТНЫЕ ДОРОГИ%",
+        "%платной дороге%", "%Платной дороге%", "%ПЛАТНОЙ ДОРОГЕ%",
+        "%платная трасса%", "%Платная трасса%", "%ПЛАТНАЯ ТРАССА%",
+        "%платные трассы%", "%Платные трассы%", "%ПЛАТНЫЕ ТРАССЫ%",
+    )
+    await execute(
+        """
+        UPDATE operations
+        SET category_id = (
+            SELECT id FROM categories WHERE name = 'Транспорт' LIMIT 1
+        )
+        WHERE operation_type = 'expense'
+          AND description IS NOT NULL
+          AND (
+              description LIKE ?
+              OR description LIKE ?
+              OR description LIKE ?
+              OR description LIKE ?
+              OR description LIKE ?
+              OR description LIKE ?
+              OR description LIKE ?
+              OR description LIKE ?
+              OR description LIKE ?
+              OR description LIKE ?
+              OR description LIKE ?
+              OR description LIKE ?
+              OR description LIKE ?
+              OR description LIKE ?
+              OR description LIKE ?
+              OR description LIKE ?
+              OR description LIKE ?
+              OR description LIKE ?
+              OR description LIKE ?
+              OR description LIKE ?
+              OR description LIKE ?
+          )
+        """,
+        *transport_patterns,
+    )
 
     await execute(
         """
