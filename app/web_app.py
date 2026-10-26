@@ -159,7 +159,7 @@ tbody tr:last-child td{border-bottom:0}
 <header class="topbar">
   <div class="brand">FAM / BUDGET<small>СЕМЕЙНАЯ ФИНАНСОВАЯ СИСТЕМА</small></div>
   <nav class="nav" aria-label="Управление аккаунтом">
-    <button class="logout" id="logoutButton" type="button">Выйти ↗</button>
+    <button class="logout" id="logoutButton" type="button">Выйти ↗︎</button>
   </nav>
 </header>
 <main>
@@ -196,7 +196,7 @@ tbody tr:last-child td{border-bottom:0}
   <h1>Деньги<span>под контролем</span></h1>
   <div class="hero-bottom">
     <p>Один экран для реальных денег, категорий, обязательных платежей и накоплений. Данные сохраняются в общей базе семейного бюджета.</p>
-    <button class="pill primary" type="button" data-view-target="operations">Управлять бюджетом ↘</button>
+    <button class="pill primary" type="button" data-view-target="operations">Управлять бюджетом ↘︎</button>
   </div>
 </section>
 
