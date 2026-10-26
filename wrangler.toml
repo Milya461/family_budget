@@ -23,5 +23,3 @@ persist = true
 [triggers]
 crons = ["0 19 * * *"]
 
-[build]
-command = "python3 scripts/patch_web_app.py"
