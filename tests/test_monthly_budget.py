@@ -39,7 +39,7 @@ def test_distribute_amount_fills_categories_before_savings():
     assert total == 10000
 
 
-def test_distribute_amount_uses_savings_after_categories():
+def test_distribute_amount_does_not_auto_allocate_savings():
     budgets = [
         {
             "id": 1,
@@ -62,11 +62,12 @@ def test_distribute_amount_uses_savings_after_categories():
         }
     ]
 
-    assert result["savings"] == 8000
-    assert result["unallocated"] == 0
+    # Накопления теперь пополняются только вручную.
+    assert result["savings"] == 0
+    assert result["unallocated"] == 8000
 
 
-def test_distribute_amount_respects_savings_limit():
+def test_distribute_amount_leaves_cash_unallocated_when_categories_are_full():
     budgets = [
         {
             "id": 1,
@@ -82,8 +83,9 @@ def test_distribute_amount_respects_savings_limit():
     )
 
     assert result["categories"] == []
-    assert result["savings"] == 23000
-    assert result["unallocated"] == 7000
+    # Свободные деньги не переводятся в копилку автоматически.
+    assert result["savings"] == 0
+    assert result["unallocated"] == 30000
 
 
 def test_distribute_amount_returns_zero_for_non_positive_amount():
