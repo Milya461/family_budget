@@ -91,7 +91,27 @@ label{display:block;margin:0 0 6px;font-size:10px;text-transform:uppercase;lette
 .category-meta{display:flex;justify-content:space-between;gap:8px;margin:12px 0 7px;font-size:10px;color:var(--muted)}
 .track{height:3px;background:rgba(0,0,0,.12);overflow:hidden}
 .track span{display:block;height:100%;background:#111;max-width:100%}
+/* category-detail-feature-v1 */
 .side-stack{display:grid;align-content:start;gap:20px}
+.category.clickable{cursor:pointer;transition:background .15s ease}
+.category.clickable:hover,.category.clickable:focus-visible{background:rgba(255,255,255,.28);outline:none}
+.category-open{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-top:4px}
+.category-detail{display:none;margin-top:18px;border-top:1px solid var(--line)}
+.category-detail.show{display:block}
+.category-detail-head{display:flex;justify-content:space-between;align-items:end;gap:18px;padding:20px 0 14px;border-bottom:1px solid var(--line)}
+.category-detail-head h3{margin:0;font-size:21px;line-height:1;text-transform:uppercase;letter-spacing:-.05em}
+.category-detail-head p{margin:6px 0 0;color:var(--muted);font-size:10px}
+.category-detail-total{text-align:right;white-space:nowrap}
+.category-detail-total span{display:block;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em}
+.category-detail-total strong{display:block;margin-top:3px;font-size:20px;letter-spacing:-.05em}
+.category-detail-close{border:1px solid var(--ink);background:transparent;padding:8px 12px;font-size:9px;text-transform:uppercase;letter-spacing:.08em}
+.category-expenses{display:grid}
+.category-expense{display:grid;grid-template-columns:92px minmax(0,1fr) auto;gap:14px;align-items:start;padding:13px 0;border-bottom:1px solid var(--softline)}
+.category-expense-date{font-size:10px;color:var(--muted)}
+.category-expense-description{font-size:11px}
+.category-expense-amount{font-size:11px;font-weight:700;white-space:nowrap}
+@media(max-width:600px){.category-detail-head{align-items:flex-start;flex-direction:column}.category-detail-total{text-align:left}.category-expense{grid-template-columns:72px minmax(0,1fr) auto;gap:9px}.category-expense-amount{font-size:10px}}
+
 .line-card{border:1px solid var(--line);padding:18px}
 .line-card h3{margin:0 0 7px;font-size:14px;letter-spacing:-.03em;text-transform:uppercase}
 .line-card .sub{margin:0 0 17px;font-size:11px;color:var(--muted)}
@@ -216,6 +236,17 @@ tbody tr:last-child td{border-bottom:0}
 </section>
 <section class="category-only">
 <div class="category-list" id="categoryList"><div class="empty">Загружаю категории…</div></div>
+<section class="category-detail" id="categoryDetail" aria-live="polite">
+  <div class="category-detail-head">
+    <div>
+      <h3 id="categoryDetailTitle">Категория</h3>
+      <p id="categoryDetailSubtitle">Расходы за выбранный месяц</p>
+    </div>
+    <div class="category-detail-total"><span>Потрачено</span><strong id="categoryDetailTotal">0 ₽</strong></div>
+    <button class="category-detail-close" id="categoryDetailClose" type="button">Закрыть</button>
+  </div>
+  <div class="category-expenses" id="categoryExpenseList"><div class="empty">Расходов нет.</div></div>
+</section>
 </section>
 </section>
 
@@ -422,8 +453,39 @@ function renderCategories(categories){
   $('categoryList').innerHTML=categories.map(function(c){
     var limit=Number(c.limit||0),spent=Number(c.spent||0),allocated=Number(c.allocated||0);
     var progress=limit>0?Math.min(100,spent/limit*100):0;
-    return '<article class="category"><div class="category-top"><div class="category-name">'+escapeHtml(c.name)+'</div><div class="category-amount">'+money(spent)+' / '+money(limit)+'</div></div><div class="category-meta"><span>Распределено: '+money(allocated)+'</span><span>Осталось по лимиту: '+money(Math.max(limit-spent,0))+'</span></div><div class="track"><span style="width:'+progress.toFixed(2)+'%"></span></div></article>';
+    return '<article class="category clickable" role="button" tabindex="0" data-category-name="'+escapeHtml(c.name)+'"><div class="category-top"><div><div class="category-name">'+escapeHtml(c.name)+'</div><div class="category-open">Открыть расходы →</div></div><div class="category-amount">'+money(spent)+' / '+money(limit)+'</div></div><div class="category-meta"><span>Распределено: '+money(allocated)+'</span><span>Осталось по лимиту: '+money(Math.max(limit-spent,0))+'</span></div><div class="track"><span style="width:'+progress.toFixed(2)+'%"></span></div></article>';
   }).join('');
+  Array.prototype.forEach.call($('categoryList').querySelectorAll('[data-category-name]'),function(card){
+    var open=function(){renderCategoryDetail(card.getAttribute('data-category-name'));};
+    card.addEventListener('click',open);
+    card.addEventListener('keydown',function(event){if(event.key==='Enter'||event.key===' '){event.preventDefault();open();}});
+  });
+  renderCategoryDetail('');
+}
+function renderCategoryDetail(categoryName){
+  var detail=$('categoryDetail');
+  if(!categoryName){detail.classList.remove('show');return;}
+  var operations=(state.data&&state.data.operations)||[];
+  var items=operations.filter(function(o){
+    return o.operation_type==='expense'&&o.category_name===categoryName&&String(o.operation_date||'').slice(0,7)===String(state.month||'');
+  }).sort(function(a,b){
+    var dateA=String(a.operation_date||'');
+    var dateB=String(b.operation_date||'');
+    if(dateA!==dateB)return dateB.localeCompare(dateA);
+    return Number(b.id||0)-Number(a.id||0);
+  });
+  var total=items.reduce(function(sum,item){return sum+Number(item.amount||0);},0);
+  $('categoryDetailTitle').textContent=categoryName;
+  $('categoryDetailSubtitle').textContent='Расходы за '+String(state.month||'').replace('-', ' / ');
+  $('categoryDetailTotal').textContent=money(total);
+  $('categoryExpenseList').innerHTML=items.length?items.map(function(item){
+    var date=String(item.operation_date||'').split('-');
+    var dateText=date.length===3?date[2]+'.'+date[1]+'.'+date[0]:String(item.operation_date||'');
+    var description=item.description||'Без описания';
+    return '<div class="category-expense"><div class="category-expense-date">'+escapeHtml(dateText)+'</div><div class="category-expense-description">'+escapeHtml(description)+'</div><div class="category-expense-amount">−'+money(item.amount)+'</div></div>';
+  }).join(''):'<div class="empty">В этой категории за выбранный месяц расходов нет.</div>';
+  detail.classList.add('show');
+  window.requestAnimationFrame(function(){detail.scrollIntoView({behavior:'smooth',block:'start'});});
 }
 function renderPayments(payments){
   if(!payments.length){$('paymentList').innerHTML='<div class="empty">В базе нет обязательных платежей за выбранный месяц. Будущие события автоматически не создавались.</div>';return;}
@@ -515,6 +577,7 @@ Array.prototype.forEach.call(document.querySelectorAll('[data-view-target]'),fun
   });
 });
 $('monthPicker').addEventListener('change',async function(){try{setBusy(true);await reload($('monthPicker').value);}catch(error){showToast(error.message);}finally{setBusy(false);}});
+$('categoryDetailClose').addEventListener('click',function(){renderCategoryDetail('');window.scrollTo({top:0,behavior:'smooth'});});
 $('expenseForm').addEventListener('submit',function(event){event.preventDefault();submitForm(event.currentTarget,'/api/expense',function(){return {amount:$('expenseAmount').value,category:$('expenseCategory').value,description:$('expenseDescription').value};},'Расход записан.');});
 $('incomeForm').addEventListener('submit',function(event){event.preventDefault();submitForm(event.currentTarget,'/api/income',function(){return {amount:$('incomeAmount').value,description:$('incomeDescription').value};},'Доход записан.');});
 var pendingSavingsRequestId='';
