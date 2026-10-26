@@ -477,6 +477,19 @@ async def get_available_cash_for_allocation(
     if allocation_date is None:
         allocation_date = get_moscow_today()
 
+    await execute(
+        """
+        CREATE TABLE IF NOT EXISTS balance_adjustments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            delta REAL NOT NULL,
+            previous_balance REAL NOT NULL,
+            target_balance REAL NOT NULL,
+            note TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
     totals = await fetch_all(
         """
         SELECT
@@ -504,14 +517,22 @@ async def get_available_cash_for_allocation(
         """
     )
 
+    adjustments_total = await fetch_value(
+        """
+        SELECT COALESCE(SUM(delta), 0)
+        FROM balance_adjustments
+        """
+    ) or 0
+
     if totals:
         main_account = (
             float(totals[0]["income"] or 0)
             - float(totals[0]["expenses"] or 0)
             - float(await get_savings_balance() or 0)
+            + float(adjustments_total or 0)
         )
     else:
-        main_account = 0.0
+        main_account = float(adjustments_total or 0)
 
     pending_payments = 0
 
