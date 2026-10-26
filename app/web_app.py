@@ -386,8 +386,10 @@ function renderAdjustments(items){
   }).join('');
 }
 async function reload(month){
-  var selected=month||$('monthPicker').value||currentMonth();
-  var data=await api('/api/dashboard?month='+encodeURIComponent(selected),{method:'GET',headers:{}});
+  var selected=month||$('monthPicker').value;
+  var path='/api/dashboard';
+  if(selected)path+='?month='+encodeURIComponent(selected);
+  var data=await api(path,{method:'GET',headers:{}});
   render(data);
 }
 async function submitForm(form, path, buildBody, successMessage, onSuccess){
@@ -426,7 +428,6 @@ $('savingsForm').addEventListener('submit',function(event){
 });
 $('balanceForm').addEventListener('submit',function(event){event.preventDefault();var target=Number($('balanceInput').value);if(!Number.isFinite(target)||target<0){showToast('Введи реальный остаток не меньше нуля.');return;}if(!window.confirm('Установить реальный остаток '+money(target)+'? История доходов и расходов не изменится.'))return;submitForm(event.currentTarget,'/api/balance',function(){return {amount:target};},'Реальный остаток обновлён.');});
 (async function init(){
-  $('monthPicker').value=currentMonth();
   try{await reload();}catch(error){if(error.message!=='Нужно войти заново.')showToast(error.message);}
 })();
 })();
