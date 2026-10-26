@@ -1657,6 +1657,19 @@ class Default(WorkerEntrypoint):
                     "Content-Type": "text/html; charset=utf-8",
                     "Cache-Control": "no-store",
                     "X-Content-Type-Options": "nosniff",
+                    "X-Frame-Options": "DENY",
+                    "Referrer-Policy": "no-referrer",
+                    "Content-Security-Policy": (
+                        "default-src 'self'; "
+                        "script-src 'self' 'unsafe-inline'; "
+                        "style-src 'self' 'unsafe-inline'; "
+                        "img-src 'self' data:; "
+                        "connect-src 'self'; "
+                        "object-src 'none'; "
+                        "base-uri 'self'; "
+                        "form-action 'self'; "
+                        "frame-ancestors 'none'"
+                    ),
                 },
             )
 
