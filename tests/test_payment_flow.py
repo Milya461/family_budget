@@ -431,15 +431,23 @@ def test_get_event_day_for_last_day():
 
 @pytest.mark.asyncio
 async def test_get_current_balance(monkeypatch):
-    values = iter([150000, 23000])
+    values = iter([150000, 23000, 0])
 
     async def fake_fetch_value(query, *params):
         return next(values)
+
+    async def fake_execute(query, *params):
+        return None
 
     monkeypatch.setattr(
         payment_flow,
         "fetch_value",
         fake_fetch_value,
+    )
+    monkeypatch.setattr(
+        payment_flow,
+        "execute",
+        fake_execute,
     )
 
     result = await payment_flow.get_current_balance()
