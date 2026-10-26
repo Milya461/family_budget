@@ -18,6 +18,19 @@ def test_detect_categories():
     assert detect_category("аптека 850") == "Здоровье"
 
 
+def test_detect_new_expense_categories():
+    assert detect_category("такси 150") == "Транспорт"
+    assert detect_category("платная трасса 500") == "Транспорт"
+    assert detect_category("маникюр 1500") == "Красота"
+    assert detect_category("куртка 4500") == "Одежда"
+    assert detect_category("подписка на Яндекс Плюс 399") == "Подписки"
+
+
+def test_removed_categories_are_not_detected():
+    assert detect_category("непредвиденное 100") is None
+    assert detect_category("личные покупки 100") is None
+
+
 def test_detect_income():
     assert detect_income("зарплата 50000")
     assert detect_income("родители прислали 5000")
