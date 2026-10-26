@@ -363,8 +363,21 @@ function renderOperations(operations){
     var type=isIncome?'Доход':'Расход';
     var name=o.description||o.debt_name||type;
     var group=o.category_name||o.debt_name||'—';
-    return '<tr><td>'+escapeHtml(o.operation_date)+'</td><td><span class="type">'+type+'</span></td><td>'+escapeHtml(name)+'</td><td>'+escapeHtml(group)+'</td><td class="right '+(isIncome?'positive':'negative')+'">'+(isIncome?'+':'−')+money(o.amount)+'</td></tr>';
+    var isPetFood=!isIncome&&o.category_name==='Питомцы'&&/корм|грандорф|grandorf|jarvi|джарви/i.test(name);
+    var stockButton=isPetFood?'<button class="button" type="button" data-stock-id="'+Number(o.id)+'" data-stock-months="'+Number(o.stock_months||0)+'">'+(o.stock_months?'Запас: '+Number(o.stock_months)+' мес.':'Отметить запас')+'</button>':'';
+    return '<tr><td>'+escapeHtml(o.operation_date)+'</td><td><span class="type">'+type+'</span></td><td>'+escapeHtml(name)+(stockButton?'<div style="margin-top:8px">'+stockButton+'</div>':'')+'</td><td>'+escapeHtml(group)+'</td><td class="right '+(isIncome?'positive':'negative')+'">'+(isIncome?'+':'−')+money(o.amount)+'</td></tr>';
   }).join('');
+  Array.prototype.forEach.call($('operationTable').querySelectorAll('[data-stock-id]'),function(button){
+    button.addEventListener('click',async function(){
+      var raw=window.prompt('На сколько месяцев хватит этого корма? Введи число от 1 до 24.',button.getAttribute('data-stock-months')||'3');
+      if(raw===null)return;
+      var months=Number(raw);
+      if(!Number.isInteger(months)||months<1||months>24){showToast('Укажи срок от 1 до 24 месяцев.');return;}
+      try{setBusy(true);await api('/api/stock',{method:'POST',body:JSON.stringify({operation_id:Number(button.getAttribute('data-stock-id')),months:months})});await reload();showToast('Срок запаса записан.');}
+      catch(error){showToast(error.message);}
+      finally{setBusy(false);}
+    });
+  });
 }
 function renderAdjustments(items){
   if(!items.length){$('adjustmentTable').innerHTML='<tr><td colspan="5" class="empty">Реальный остаток ещё не корректировали.</td></tr>';return;}
