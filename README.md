@@ -42,6 +42,18 @@
 
 ## Развёртывание
 
-Проект настроен на Cloudflare Workers Python runtime с D1 binding `DB`. После обновления кода в GitHub дождись автоматического развёртывания, если репозиторий подключён к Cloudflare Builds. Если автоматическая сборка не включена, запусти существующий процесс деплоя Worker вручную.
+Проект настроен на Cloudflare Workers Python runtime с D1 binding `DB`. Для автоматического применения изменений из GitHub к опубликованному Worker нужно подключить репозиторий в Cloudflare Workers Builds и использовать Pywrangler.
+
+### Однократная настройка Cloudflare Builds
+
+1. Открой Cloudflare Dashboard → Workers & Pages → `familu-budget` → **Settings → Builds**.
+2. Убедись, что подключён Git-репозиторий `Milya461/family_budget`, production branch — `main`, а Root directory пустой (конфиги находятся в корне репозитория).
+3. Задай **Build command**: `uv sync --all-groups`.
+4. Задай **Deploy command**: `uv run pywrangler deploy`.
+5. Сохрани настройки и запусти новый production build. После этого новые коммиты из GitHub будут автоматически собираться и публиковаться.
+
+Cloudflare Python Workers требуют Pywrangler для упаковки Python-зависимостей. Не задавай `pip install -r requirements.txt` и не используй обычную команду `npx wrangler deploy` для этого Python Worker. Официальная документация: [Python package setup](https://developers.cloudflare.com/workers/languages/python/packages/) и [Workers Builds configuration](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/).
+
+Секрет `WEB_APP_PASSWORD` должен оставаться в настройках Worker в разделе **Variables and Secrets**; секрет не записывается в GitHub. В `wrangler.toml` включён `keep_vars = true`, чтобы сохранить переменные, настроенные через Dashboard.
 
 Проверка Worker: `/health`.
