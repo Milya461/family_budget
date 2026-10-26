@@ -1,0 +1,159 @@
+name: Apply category detail UI
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[category-detail]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Patch category detail
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('app/web_app.py')
+          text = path.read_text(encoding='utf-8')
+          marker = 'category-detail-feature-v1'
+          if marker in text:
+              print('Category detail is already present.')
+              raise SystemExit(0)
+
+          css_old = ".side-stack{display:grid;align-content:start;gap:20px}"
+          css_new = r'''/* category-detail-feature-v1 */
+          .side-stack{display:grid;align-content:start;gap:20px}
+          .category.clickable{cursor:pointer;transition:background .15s ease}
+          .category.clickable:hover,.category.clickable:focus-visible{background:rgba(255,255,255,.28);outline:none}
+          .category-open{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-top:4px}
+          .category-detail{display:none;margin-top:18px;border-top:1px solid var(--line)}
+          .category-detail.show{display:block}
+          .category-detail-head{display:flex;justify-content:space-between;align-items:end;gap:18px;padding:20px 0 14px;border-bottom:1px solid var(--line)}
+          .category-detail-head h3{margin:0;font-size:21px;line-height:1;text-transform:uppercase;letter-spacing:-.05em}
+          .category-detail-head p{margin:6px 0 0;color:var(--muted);font-size:10px}
+          .category-detail-total{text-align:right;white-space:nowrap}
+          .category-detail-total span{display:block;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em}
+          .category-detail-total strong{display:block;margin-top:3px;font-size:20px;letter-spacing:-.05em}
+          .category-detail-close{border:1px solid var(--ink);background:transparent;padding:8px 12px;font-size:9px;text-transform:uppercase;letter-spacing:.08em}
+          .category-expenses{display:grid}
+          .category-expense{display:grid;grid-template-columns:92px minmax(0,1fr) auto;gap:14px;align-items:start;padding:13px 0;border-bottom:1px solid var(--softline)}
+          .category-expense-date{font-size:10px;color:var(--muted)}
+          .category-expense-description{font-size:11px}
+          .category-expense-amount{font-size:11px;font-weight:700;white-space:nowrap}
+          @media(max-width:600px){.category-detail-head{align-items:flex-start;flex-direction:column}.category-detail-total{text-align:left}.category-expense{grid-template-columns:72px minmax(0,1fr) auto;gap:9px}.category-expense-amount{font-size:10px}}
+          '''
+          if css_old not in text:
+              raise SystemExit('CSS anchor not found')
+          text = text.replace(css_old, css_new, 1)
+
+          html_old = '''<section class="category-only">
+          <div class="category-list" id="categoryList"><div class="empty">Загружаю категории…</div></div>
+          </section>
+          </section>
+
+          <section class="app-view" data-view="credits"'''
+          html_new = '''<section class="category-only">
+          <div class="category-list" id="categoryList"><div class="empty">Загружаю категории…</div></div>
+          <section class="category-detail" id="categoryDetail" aria-live="polite">
+            <div class="category-detail-head">
+              <div>
+                <h3 id="categoryDetailTitle">Категория</h3>
+                <p id="categoryDetailSubtitle">Расходы за выбранный месяц</p>
+              </div>
+              <div class="category-detail-total"><span>Потрачено</span><strong id="categoryDetailTotal">0 ₽</strong></div>
+              <button class="category-detail-close" id="categoryDetailClose" type="button">Закрыть</button>
+            </div>
+            <div class="category-expenses" id="categoryExpenseList"><div class="empty">Расходов нет.</div></div>
+          </section>
+          </section>
+          </section>
+
+          <section class="app-view" data-view="credits"'''
+          if html_old not in text:
+              raise SystemExit('HTML anchor not found')
+          text = text.replace(html_old, html_new, 1)
+
+          js_old = '''function renderCategories(categories){
+            if(!categories.length){$('categoryList').innerHTML='<div class="empty">Категории не найдены.</div>';return;}
+            $('categoryList').innerHTML=categories.map(function(c){
+              var limit=Number(c.limit||0),spent=Number(c.spent||0),allocated=Number(c.allocated||0);
+              var progress=limit>0?Math.min(100,spent/limit*100):0;
+              return '<article class="category"><div class="category-top"><div class="category-name">'+escapeHtml(c.name)+'</div><div class="category-amount">'+money(spent)+' / '+money(limit)+'</div></div><div class="category-meta"><span>Распределено: '+money(allocated)+'</span><span>Осталось по лимиту: '+money(Math.max(limit-spent,0))+'</span></div><div class="track"><span style="width:'+progress.toFixed(2)+'%"></span></div></article>';
+            }).join('');
+          }
+          '''
+          js_new = '''function renderCategories(categories){
+            if(!categories.length){$('categoryList').innerHTML='<div class="empty">Категории не найдены.</div>';return;}
+            $('categoryList').innerHTML=categories.map(function(c){
+              var limit=Number(c.limit||0),spent=Number(c.spent||0),allocated=Number(c.allocated||0);
+              var progress=limit>0?Math.min(100,spent/limit*100):0;
+              return '<article class="category clickable" role="button" tabindex="0" data-category-name="'+escapeHtml(c.name)+'"><div class="category-top"><div><div class="category-name">'+escapeHtml(c.name)+'</div><div class="category-open">Открыть расходы →</div></div><div class="category-amount">'+money(spent)+' / '+money(limit)+'</div></div><div class="category-meta"><span>Распределено: '+money(allocated)+'</span><span>Осталось по лимиту: '+money(Math.max(limit-spent,0))+'</span></div><div class="track"><span style="width:'+progress.toFixed(2)+'%"></span></div></article>';
+            }).join('');
+            Array.prototype.forEach.call($('categoryList').querySelectorAll('[data-category-name]'),function(card){
+              var open=function(){renderCategoryDetail(card.getAttribute('data-category-name'));};
+              card.addEventListener('click',open);
+              card.addEventListener('keydown',function(event){if(event.key==='Enter'||event.key===' '){event.preventDefault();open();}});
+            });
+            renderCategoryDetail('');
+          }
+          function renderCategoryDetail(categoryName){
+            var detail=$('categoryDetail');
+            if(!categoryName){detail.classList.remove('show');return;}
+            var operations=(state.data&&state.data.operations)||[];
+            var items=operations.filter(function(o){
+              return o.operation_type==='expense'&&o.category_name===categoryName&&String(o.operation_date||'').slice(0,7)===String(state.month||'');
+            }).sort(function(a,b){
+              var dateA=String(a.operation_date||'');
+              var dateB=String(b.operation_date||'');
+              if(dateA!==dateB)return dateB.localeCompare(dateA);
+              return Number(b.id||0)-Number(a.id||0);
+            });
+            var total=items.reduce(function(sum,item){return sum+Number(item.amount||0);},0);
+            $('categoryDetailTitle').textContent=categoryName;
+            $('categoryDetailSubtitle').textContent='Расходы за '+String(state.month||'').replace('-', ' / ');
+            $('categoryDetailTotal').textContent=money(total);
+            $('categoryExpenseList').innerHTML=items.length?items.map(function(item){
+              var date=String(item.operation_date||'').split('-');
+              var dateText=date.length===3?date[2]+'.'+date[1]+'.'+date[0]:String(item.operation_date||'');
+              var description=item.description||'Без описания';
+              return '<div class="category-expense"><div class="category-expense-date">'+escapeHtml(dateText)+'</div><div class="category-expense-description">'+escapeHtml(description)+'</div><div class="category-expense-amount">−'+money(item.amount)+'</div></div>';
+            }).join(''):'<div class="empty">В этой категории за выбранный месяц расходов нет.</div>';
+            detail.classList.add('show');
+            window.requestAnimationFrame(function(){detail.scrollIntoView({behavior:'smooth',block:'start'});});
+          }
+          '''
+          if js_old not in text:
+              raise SystemExit('JS renderCategories anchor not found')
+          text = text.replace(js_old, js_new, 1)
+
+          close_old = '''$('monthPicker').addEventListener('change',async function(){try{setBusy(true);await reload($('monthPicker').value);}catch(error){showToast(error.message);}finally{setBusy(false);}});'''
+          close_new = close_old + '''
+          $('categoryDetailClose').addEventListener('click',function(){renderCategoryDetail('');window.scrollTo({top:0,behavior:'smooth'});});'''
+          if close_old not in text:
+              raise SystemExit('month listener anchor not found')
+          text = text.replace(close_old, close_new, 1)
+
+          path.write_text(text, encoding='utf-8')
+          print('Category detail patch applied.')
+
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/web_app.py
+          git diff --cached --quiet && exit 0
+          git commit -m "Add category expense details [category-detail]"
+          git push
+
+      - name: Remove temporary workflow
+        if: success()
+        run: |
+          git rm .github/workflows/patch-category-detail.yml
+          git commit -m "Remove temporary category detail patch workflow [category-detail]"
+          git push
