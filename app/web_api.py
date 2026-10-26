@@ -211,7 +211,7 @@ async def _add_manual_savings(body):
 
     today = get_moscow_today().isoformat()
     month = today[:7]
-    source = "manual-savings:" + request_id
+    source = "savings"
 
     await execute_many([
         (
@@ -476,7 +476,18 @@ async def handle_web_api(path, request, env):
             amount = _number(body.get("amount"), "Сумма платежа")
             if amount <= 0:
                 raise ValueError("Сумма платежа должна быть больше нуля.")
-            result = await record_actual_payment(payment_id=payment_id, actual_amount=amount)
+            telegram_id = await fetch_value(
+                "SELECT telegram_id FROM users WHERE telegram_id IS NOT NULL ORDER BY id LIMIT 1"
+            )
+            if telegram_id is None:
+                raise ValueError(
+                    "В общей базе пока нет пользователя. Один раз запусти старого бота командой /start."
+                )
+            result = await record_actual_payment(
+                payment_id=payment_id,
+                actual_amount=amount,
+                telegram_id=int(telegram_id),
+            )
             if not result or not result.get("success"):
                 return _json({"error": (result or {}).get("error", "Не удалось записать платёж.")}, 400)
             return _json({"success": True, "result": result, "balance": await get_current_balance()})
