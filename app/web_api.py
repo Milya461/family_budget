@@ -378,7 +378,7 @@ async def _set_real_balance(body):
 
 
 async def _category_expense_details(category_name, month):
-    """Return ordinary category expenses only; mandatory payments stay separate."""
+    """Return every expense assigned to this category and its monthly total."""
     category_id = await fetch_value(
         "SELECT id FROM categories WHERE name = ? AND is_active = 1",
         category_name,
@@ -386,46 +386,34 @@ async def _category_expense_details(category_name, month):
     if category_id is None:
         return None
 
-    rows = await fetch_all(
+    operations = await fetch_all(
         """
-        SELECT
-            o.id,
-            o.amount,
-            o.description,
-            o.operation_date,
-            o.debt_id,
-            d.name AS debt_name
-        FROM operations o
-        LEFT JOIN debts d ON d.id = o.debt_id
-        WHERE o.operation_type = 'expense'
-          AND o.category_id = ?
-          AND substr(o.operation_date, 1, 7) = ?
-        ORDER BY o.operation_date DESC, o.id DESC
+        SELECT id, amount, description, operation_date
+        FROM operations
+        WHERE operation_type = 'expense'
+          AND category_id = ?
+          AND substr(operation_date, 1, 7) = ?
+        ORDER BY operation_date DESC, id DESC
+        """,
+        category_id,
+        month,
+    )
+    total = await fetch_value(
+        """
+        SELECT COALESCE(SUM(amount), 0)
+        FROM operations
+        WHERE operation_type = 'expense'
+          AND category_id = ?
+          AND substr(operation_date, 1, 7) = ?
         """,
         category_id,
         month,
     )
 
-    operations = [
-        {
-            "id": row["id"],
-            "amount": row["amount"],
-            "description": row.get("description"),
-            "operation_date": row["operation_date"],
-        }
-        for row in rows
-        if row.get("debt_id") is None
-        and classify_mandatory_payment(
-            row.get("description") or "",
-            row.get("debt_name"),
-        ) is None
-    ]
-    total = sum(float(row.get("amount") or 0) for row in operations)
-
     return {
         "category": category_name,
         "month": month,
-        "total": round(total, 2),
+        "total": round(float(total or 0), 2),
         "operations": operations,
     }
 
