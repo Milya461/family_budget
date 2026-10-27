@@ -655,12 +655,12 @@ async def get_monthly_report(
         else 0
     )
 
-    # Only ordinary expense operations count toward the life budget.
-    # Debt-linked rows and explicitly named required payments are excluded
-    # inside summarize_month_expenses; do not subtract them a second time.
-    life_expenses = round(
-        float(expense_summary["life_expenses"] or 0),
-        2,
+    # The raw monthly expense total includes both ordinary expenses and
+    # required-payment operations. Subtract the authoritative sum of actual
+    # required payments exactly once to get ordinary spending.
+    life_expenses = calculate_life_expenses(
+        month_expenses,
+        mandatory_expenses,
     )
 
     total_income = (
