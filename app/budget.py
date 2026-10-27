@@ -655,11 +655,12 @@ async def get_monthly_report(
         else 0
     )
 
-    # This is the single definition used by the dashboard:
-    # ordinary expenses = all recorded expenses - actual required payments.
-    life_expenses = calculate_life_expenses(
-        month_expenses,
-        mandatory_expenses,
+    # Only ordinary expense operations count toward the life budget.
+    # Debt-linked rows and explicitly named required payments are excluded
+    # inside summarize_month_expenses; do not subtract them a second time.
+    life_expenses = round(
+        float(expense_summary["life_expenses"] or 0),
+        2,
     )
 
     total_income = (
