@@ -210,7 +210,7 @@ def test_duplicate_utility_cleanup_keeps_top_and_removes_older_once(monkeypatch)
     assert "ORDER BY operation_date DESC, id DESC" in query
 
 
-def test_duplicate_utility_cleanup_marks_single_remaining_row_without_deleting(monkeypatch):
+def test_duplicate_utility_cleanup_leaves_single_row_and_can_retry(monkeypatch):
     fetch_value = AsyncMock(return_value=None)
     fetch_all = AsyncMock(return_value=[
         {"id": 202, "amount": 18195.60, "operation_date": "2026-10-25"}
@@ -224,6 +224,4 @@ def test_duplicate_utility_cleanup_marks_single_remaining_row_without_deleting(m
 
     asyncio.run(web_api._remove_known_duplicate_utility_expense())
 
-    statements = execute_many.await_args.args[0]
-    assert len(statements) == 1
-    assert "INSERT OR REPLACE INTO bot_settings" in statements[0][0]
+    execute_many.assert_not_awaited()
