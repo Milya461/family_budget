@@ -1,0 +1,49 @@
+name: Temporary history view patch
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !startsWith(github.event.head_commit.message, '[history patch]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Patch history access
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          web = Path('app/web_app.py')
+          text = web.read_text(encoding='utf-8')
+
+          marker = '''</section>\n\n<section class="app-view" data-view="more" id="view-more">'''
+          insert = '''</section>\n\n<section class="history-shortcut">\n  <button class="button" type="button" data-view-target="more">История доходов и расходов →</button>\n</section>\n\n<section class="app-view" data-view="more" id="view-more">'''
+          if marker not in text:
+              raise SystemExit('History insertion marker not found in app/web_app.py')
+          if 'История доходов и расходов →' not in text:
+              text = text.replace(marker, insert, 1)
+              web.write_text(text, encoding='utf-8')
+
+          api = Path('app/web_api.py')
+          api_text = api.read_text(encoding='utf-8')
+          if 'LIMIT 40' not in api_text:
+              raise SystemExit('Operations limit marker not found in app/web_api.py')
+          api_text = api_text.replace('LIMIT 40', 'LIMIT 500', 1)
+          api.write_text(api_text, encoding='utf-8')
+          PY
+
+      - name: Commit patch and remove temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/history_patch.yml
+          git add app/web_app.py app/web_api.py
+          git commit -m "[history patch] add income and expense history"
+          git push
