@@ -56,3 +56,19 @@ def test_classify_mandatory_payments_for_dashboard_totals():
 
 def test_classify_mandatory_payment_uses_debt_name_when_description_is_generic():
     assert classify_mandatory_payment("обязательный платёж", "Ипотека") == "Ипотека"
+
+
+
+def test_mandatory_payment_classifier_does_not_hide_ordinary_spending():
+    assert classify_mandatory_payment("покупка воды для животных") is None
+    assert classify_mandatory_payment("вода для котов") is None
+    assert classify_mandatory_payment("ремонт квартиры") is None
+    assert classify_mandatory_payment("покупка света для фотосессии") is None
+
+
+def test_mandatory_payment_classifier_recognizes_explicit_bill_descriptions():
+    assert classify_mandatory_payment("кредитка") == "Кредитная карта"
+    assert classify_mandatory_payment("кредит на машину") == "Кредит на машину"
+    assert classify_mandatory_payment("ипотека") == "Ипотека"
+    assert classify_mandatory_payment("коммунальные услуги") == "Коммунальные услуги"
+    assert classify_mandatory_payment("вода") == "Коммунальные услуги"
