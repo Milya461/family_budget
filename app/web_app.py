@@ -328,10 +328,11 @@ tbody tr:last-child td{border-bottom:0}
 <section class="history-shortcut">
   <button class="button" type="button" data-view-target="more">История доходов и расходов →</button>
 </section>
+</section>
 
 <section class="app-view" data-view="more" id="view-more">
 <section class="section-heading">
-  <div><h2>Ещё</h2><p>Реальный остаток, история операций и корректировки баланса.</p></div>
+  <div><h2>История</h2><p>Все сохранённые доходы и расходы семейного бюджета.</p></div>
 </section>
 <section class="section-heading" id="history">
   <div><h2>История операций</h2><p>Доходы, расходы и назначения зафиксированных корректировок</p></div>
