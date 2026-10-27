@@ -735,6 +735,7 @@ async def get_monthly_report(
         "savings_balance": savings_balance,
         "savings_target": savings_target,
         "savings_remaining": savings_remaining,
+        "main_account": main_account,
         "free_after_targets": free_after_targets,
-        "category_report": category_report,
+        "categories": category_report,
     }
