@@ -204,7 +204,7 @@ def test_duplicate_utility_cleanup_keeps_top_and_removes_older_once(monkeypatch)
     statements = execute_many.await_args.args[0]
     assert statements[0][1] == (199,)
     assert "DELETE FROM operations" in statements[0][0]
-    assert statements[1][1] == ("cleanup_duplicate_utility_expense_2026_10_v2",)
+    assert statements[1][1] == ("cleanup_duplicate_utility_expense_2026_10_v3",)
     query = fetch_all.await_args.args[0]
     assert "LOWER(" not in query
     assert "ORDER BY operation_date DESC, id DESC" in query
