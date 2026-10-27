@@ -498,13 +498,12 @@ async def _cancel_operation(operation_id):
                 debt_id,
                 operation_date[:7],
             )
-            if len(candidates) > 1:
+            if len(candidates) != 1:
                 raise ValueError(
                     "Не удалось однозначно определить обязательный платёж. "
-                    "Операция не отменена, чтобы не изменить не тот платёж."
+                    "Операция не отменена, чтобы не оставить платёж в неверном статусе."
                 )
-            if len(candidates) == 1:
-                payment_id = candidates[0]["id"]
+            payment_id = candidates[0]["id"]
 
         statements.append((
             "DELETE FROM stock_purchases WHERE operation_id = ?",
