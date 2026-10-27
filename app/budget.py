@@ -352,46 +352,41 @@ def calculate_life_expenses(month_expenses, mandatory_expenses):
 
 
 def summarize_month_expenses(rows):
-    """Separate ordinary spending from explicitly identified required payments."""
-    mandatory_totals = {
-        "Кредитная карта": 0.0,
-        "Кредит на машину": 0.0,
-        "Ипотека": 0.0,
-        "Коммунальные услуги": 0.0,
-    }
+    """Sum ordinary expense operations only; do not subtract duplicate payment totals."""
     life_expenses = 0.0
     other_expenses = 0.0
 
     for row in rows:
         amount = float(row.get("amount") or 0)
+        description = row.get("description") or ""
         payment_kind = classify_mandatory_payment(
-            row.get("description") or "",
+            description,
             row.get("debt_name"),
         )
 
-        if payment_kind in mandatory_totals:
-            mandatory_totals[payment_kind] += amount
+        # Explicitly identified required payments are excluded even if an old
+        # record was accidentally assigned to an ordinary category.
+        if payment_kind is not None:
             continue
 
+        # A category assignment is authoritative for normal spending. Some
+        # legacy operations have an erroneous debt_id despite being ordinary
+        # purchases; do not let that link hide a categorized purchase.
+        if row.get("category_id") is not None:
+            life_expenses += amount
+            continue
+
+        # Uncategorized rows linked to a debt are actual debt operations.
         if row.get("debt_id") is not None:
             continue
 
+        # Keep ordinary uncategorized expenses visible in the monthly total.
         life_expenses += amount
-        if row.get("category_id") is None:
-            other_expenses += amount
-
-    credit_expenses = mandatory_totals["Кредитная карта"] + mandatory_totals["Кредит на машину"]
-    mortgage_expenses = mandatory_totals["Ипотека"]
-    utilities_expenses = mandatory_totals["Коммунальные услуги"]
-    mandatory_expenses = credit_expenses + mortgage_expenses + utilities_expenses
+        other_expenses += amount
 
     return {
-        "life_expenses": life_expenses,
-        "other_expenses": other_expenses,
-        "credit_expenses": credit_expenses,
-        "mortgage_expenses": mortgage_expenses,
-        "utilities_expenses": utilities_expenses,
-        "mandatory_expenses": mandatory_expenses,
+        "life_expenses": round(life_expenses, 2),
+        "other_expenses": round(other_expenses, 2),
     }
 
 
@@ -655,12 +650,13 @@ async def get_monthly_report(
         else 0
     )
 
-    # The raw monthly expense total includes both ordinary expenses and
-    # required-payment operations. Subtract the authoritative sum of actual
-    # required payments exactly once to get ordinary spending.
-    life_expenses = calculate_life_expenses(
-        month_expenses,
-        mandatory_expenses,
+    # Ordinary expenses are the sum of ordinary operation rows only.
+    # Do not subtract mandatory-payments-table totals from gross operations:
+    # a payment may already have an operation row, which would double-count
+    # that payment in the subtraction.
+    life_expenses = round(
+        float(expense_summary["life_expenses"] or 0),
+        2,
     )
 
     total_income = (
