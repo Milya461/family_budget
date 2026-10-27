@@ -87,11 +87,7 @@ label{display:block;margin:0 0 6px;font-size:10px;text-transform:uppercase;lette
 .mandatory-total{text-align:right;white-space:nowrap}
 .mandatory-total span{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
 .mandatory-total strong{display:block;margin-top:3px;font-size:23px;letter-spacing:-.05em}
-.mandatory-breakdown{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin-top:15px}
-.mandatory-item{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding-top:10px;border-top:1px solid var(--softline);font-size:11px}
-.mandatory-item span{color:var(--muted)}
-.mandatory-item strong{font-size:13px;white-space:nowrap}
-@media(max-width:600px){.mandatory-summary-head{align-items:flex-start;flex-direction:column}.mandatory-total{text-align:left}.mandatory-breakdown{grid-template-columns:1fr;gap:9px}}
+@media(max-width:600px){.mandatory-summary-head{align-items:flex-start;flex-direction:column}.mandatory-total{text-align:left}}
 .content-grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(300px,.85fr);gap:28px;padding:0 0 20px}
 .category-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
 .category{border-bottom:1px solid var(--line);padding:17px 18px 16px 0;min-width:0}
@@ -260,11 +256,6 @@ tbody tr:last-child td{border-bottom:0}
       <span>Всего обязательных платежей</span>
       <strong id="mandatoryTotal">—</strong>
     </div>
-  </div>
-  <div class="mandatory-breakdown">
-    <div class="mandatory-item"><span>Кредиты</span><strong id="creditExpenses">—</strong></div>
-    <div class="mandatory-item"><span>Ипотека</span><strong id="mortgageExpenses">—</strong></div>
-    <div class="mandatory-item"><span>Коммунальные услуги</span><strong id="utilitiesExpenses">—</strong></div>
   </div>
 </section>
 <section class="balance-edit-panel" id="balanceEditPanel" aria-label="Редактирование реального остатка">
@@ -484,9 +475,6 @@ function render(data){
   $('savingsNote').textContent='Отложено за месяц: '+money(r.monthly_savings);
   $('spentTotal').textContent=money(r.life_expenses);
   $('spentNote').textContent='Лимит бюджета: '+money(r.life_budget);
-  $('creditExpenses').textContent=money(r.credit_expenses);
-  $('mortgageExpenses').textContent=money(r.mortgage_expenses);
-  $('utilitiesExpenses').textContent=money(r.utilities_expenses);
   $('mandatoryTotal').textContent=money(r.mandatory_expenses);
   var pending=data.payments.filter(function(p){return p.status!=='paid';}).length;
   $('paymentsCount').textContent=String(pending);
