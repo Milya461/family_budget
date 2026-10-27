@@ -222,3 +222,12 @@ def test_monthly_spent_ignores_only_explicit_required_payments():
 
     assert result["life_expenses"] == 2200
     assert result["mandatory_expenses"] == 0
+
+
+
+def test_life_expenses_are_all_monthly_expenses_minus_required_payments():
+    from app.budget import calculate_life_expenses
+
+    assert calculate_life_expenses(97519.51, 65496.00) == 32023.51
+    assert calculate_life_expenses(0, 0) == 0
+    assert calculate_life_expenses(100, 150) == 0
