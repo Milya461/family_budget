@@ -342,9 +342,12 @@ async def add_income(
 
 def calculate_life_expenses(month_expenses, mandatory_expenses):
     """All expenses for the month minus separately reported required payments."""
-    return max(
-        float(month_expenses or 0) - float(mandatory_expenses or 0),
-        0.0,
+    return round(
+        max(
+            float(month_expenses or 0) - float(mandatory_expenses or 0),
+            0.0,
+        ),
+        2,
     )
 
 
