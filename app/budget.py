@@ -359,9 +359,14 @@ def summarize_month_expenses(rows):
     for row in rows:
         amount = float(row.get("amount") or 0)
         description = row.get("description") or ""
+        category_id = row.get("category_id")
+
+        # For categorized operations, classify the description itself only:
+        # a stale or incorrect debt_id/debt_name must not reclassify groceries,
+        # fuel or pet supplies as a debt payment.
         payment_kind = classify_mandatory_payment(
             description,
-            row.get("debt_name"),
+            None if category_id is not None else row.get("debt_name"),
         )
 
         # Explicitly identified required payments are excluded even if an old
@@ -372,7 +377,7 @@ def summarize_month_expenses(rows):
         # A category assignment is authoritative for normal spending. Some
         # legacy operations have an erroneous debt_id despite being ordinary
         # purchases; do not let that link hide a categorized purchase.
-        if row.get("category_id") is not None:
+        if category_id is not None:
             life_expenses += amount
             continue
 
