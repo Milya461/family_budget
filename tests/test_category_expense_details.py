@@ -159,7 +159,7 @@ def test_cancel_selected_expense_refuses_ambiguous_payment(monkeypatch):
 
 
 
-def test_cancel_selected_expense_refuses_unmatched_payment(monkeypatch):
+def test_cancel_selected_expense_without_matched_payment_still_cancels(monkeypatch):
     operation = {
         "id": 101,
         "operation_type": "expense",
@@ -169,7 +169,7 @@ def test_cancel_selected_expense_refuses_unmatched_payment(monkeypatch):
         "description": "Кредитная карта",
         "operation_date": "2026-10-10",
     }
-    fetch_one = AsyncMock(return_value=operation)
+    fetch_one = AsyncMock(side_effect=[operation, None])
     fetch_all = AsyncMock(return_value=[])
     execute_many = AsyncMock()
     monkeypatch.setattr(web_api, "ensure_rebalancing_tables", AsyncMock())
@@ -177,11 +177,53 @@ def test_cancel_selected_expense_refuses_unmatched_payment(monkeypatch):
     monkeypatch.setattr(web_api, "fetch_all", fetch_all)
     monkeypatch.setattr(web_api, "execute_many", execute_many)
 
-    try:
-        asyncio.run(web_api._cancel_operation(101))
-    except ValueError as error:
-        assert "обязательный платёж" in str(error)
-    else:
-        raise AssertionError("Expected unmatched mandatory payment to be rejected")
+    result = asyncio.run(web_api._cancel_operation(101))
 
-    execute_many.assert_not_awaited()
+    assert result["success"] is True
+    statements = execute_many.await_args.args[0]
+    assert any("DELETE FROM operations" in sql for sql, _ in statements)
+    assert not any("UPDATE mandatory_payments" in sql for sql, _ in statements)
+
+
+def test_duplicate_utility_cleanup_keeps_top_and_removes_older_once(monkeypatch):
+    candidates = [
+        {"id": 202, "amount": 18195.60, "operation_date": "2026-10-25"},
+        {"id": 199, "amount": 18195.00, "operation_date": "2026-10-24"},
+    ]
+    fetch_value = AsyncMock(return_value=None)
+    fetch_all = AsyncMock(return_value=candidates)
+    execute = AsyncMock()
+    execute_many = AsyncMock()
+    monkeypatch.setattr(web_api, "fetch_value", fetch_value)
+    monkeypatch.setattr(web_api, "fetch_all", fetch_all)
+    monkeypatch.setattr(web_api, "execute", execute)
+    monkeypatch.setattr(web_api, "execute_many", execute_many)
+
+    asyncio.run(web_api._remove_known_duplicate_utility_expense())
+
+    statements = execute_many.await_args.args[0]
+    assert statements[0][1] == (199,)
+    assert "DELETE FROM operations" in statements[0][0]
+    assert statements[1][1] == ("cleanup_duplicate_utility_expense_2026_10_v2",)
+    query = fetch_all.await_args.args[0]
+    assert "LOWER(" not in query
+    assert "ORDER BY operation_date DESC, id DESC" in query
+
+
+def test_duplicate_utility_cleanup_marks_single_remaining_row_without_deleting(monkeypatch):
+    fetch_value = AsyncMock(return_value=None)
+    fetch_all = AsyncMock(return_value=[
+        {"id": 202, "amount": 18195.60, "operation_date": "2026-10-25"}
+    ])
+    execute = AsyncMock()
+    execute_many = AsyncMock()
+    monkeypatch.setattr(web_api, "fetch_value", fetch_value)
+    monkeypatch.setattr(web_api, "fetch_all", fetch_all)
+    monkeypatch.setattr(web_api, "execute", execute)
+    monkeypatch.setattr(web_api, "execute_many", execute_many)
+
+    asyncio.run(web_api._remove_known_duplicate_utility_expense())
+
+    statements = execute_many.await_args.args[0]
+    assert len(statements) == 1
+    assert "INSERT OR REPLACE INTO bot_settings" in statements[0][0]
