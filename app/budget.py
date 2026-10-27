@@ -74,32 +74,21 @@ async def get_category_limit(category_id, month=None):
 
 
 async def get_category_spent(category_id, month):
-    rows = await fetch_all(
+    # category_id is the source of truth: required payments created by
+    # the payment flow have no category_id and are counted separately.
+    value = await fetch_value(
         """
-        SELECT
-            o.amount,
-            o.description,
-            o.debt_id,
-            d.name AS debt_name
-        FROM operations o
-        LEFT JOIN debts d ON d.id = o.debt_id
-        WHERE o.category_id = ?
-          AND o.operation_type = 'expense'
-          AND substr(o.operation_date, 1, 7) = ?
+        SELECT COALESCE(SUM(amount), 0)
+        FROM operations
+        WHERE category_id = ?
+          AND operation_type = 'expense'
+          AND substr(operation_date, 1, 7) = ?
         """,
         category_id,
         month,
     )
 
-    return sum(
-        float(row.get("amount") or 0)
-        for row in rows
-        if row.get("debt_id") is None
-        and classify_mandatory_payment(
-            row.get("description") or "",
-            row.get("debt_name"),
-        ) is None
-    )
+    return float(value or 0)
 
 
 async def check_expense(
@@ -349,6 +338,14 @@ async def add_income(
                 f"{type(error).__name__}: {error}"
             ),
         }
+
+
+def calculate_life_expenses(month_expenses, mandatory_expenses):
+    """All expenses for the month minus separately reported required payments."""
+    return max(
+        float(month_expenses or 0) - float(mandatory_expenses or 0),
+        0.0,
+    )
 
 
 def summarize_month_expenses(rows):
@@ -620,6 +617,11 @@ async def get_monthly_report(
         month_operations.get("expenses", 0)
         if month_operations
         else 0
+    )
+
+    life_expenses = calculate_life_expenses(
+        month_expenses,
+        mandatory_expenses,
     )
 
     total_income = (
