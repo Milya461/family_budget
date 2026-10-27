@@ -37,7 +37,7 @@ from app.rebalancing import (
     mark_stock_purchase,
     rebalance_next_month,
 )
-from app.scheduler import daily_income_check
+from app.scheduler import daily_activity_check
 from app.daily_reminders import handle_daily_expenses_callback
 from app.parser import parse_operation, extract_amount
 from app.setup import ensure_categories
@@ -1795,4 +1795,4 @@ class Default(WorkerEntrypoint):
             return
 
         bot = TelegramBot(token)
-        await daily_income_check(bot)
+        await daily_activity_check(bot)
