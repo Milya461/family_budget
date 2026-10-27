@@ -374,6 +374,196 @@ async def _category_expense_details(category_name, month):
     }
 
 
+async def _cancel_operation(operation_id):
+    """Cancel one selected history operation and reverse its direct side effects."""
+    try:
+        operation_id = int(operation_id)
+    except (TypeError, ValueError):
+        raise ValueError("Не удалось определить операцию для отмены.")
+
+    if operation_id <= 0:
+        raise ValueError("Не удалось определить операцию для отмены.")
+
+    await ensure_rebalancing_tables()
+    operation = await fetch_one(
+        """
+        SELECT
+            id, operation_type, amount, category_id, debt_id,
+            description, operation_date
+        FROM operations
+        WHERE id = ?
+        """,
+        operation_id,
+    )
+    if not operation:
+        raise ValueError("Операция уже отменена или не найдена.")
+
+    operation_type = str(operation.get("operation_type") or "")
+    if operation_type not in ("income", "expense"):
+        raise ValueError("Можно отменить только доход или расход.")
+
+    amount = round(float(operation.get("amount") or 0), 2)
+    description = str(operation.get("description") or "")
+    operation_date = str(operation.get("operation_date") or "")
+    category_id = operation.get("category_id")
+    debt_id = operation.get("debt_id")
+    statements = []
+    payment_id = None
+
+    if operation_type == "income":
+        allocation_key = f"income:{operation_id}"
+        statements.extend([
+            (
+                "DELETE FROM monthly_allocations WHERE source = ?",
+                (allocation_key,),
+            ),
+            (
+                "DELETE FROM allocation_batches WHERE source_key = ?",
+                (allocation_key,),
+            ),
+        ])
+
+        # Income events recorded by the Telegram bot use this description.
+        # Re-open the event only if exactly one match is found.
+        if description == "Получение дохода" and operation_date:
+            salary_events = await fetch_all(
+                """
+                SELECT id
+                FROM salary_events
+                WHERE status = 'income_received'
+                  AND actual_income = ?
+                  AND substr(event_date, 1, 7) = ?
+                ORDER BY id DESC
+                """,
+                amount,
+                operation_date[:7],
+            )
+            if len(salary_events) > 1:
+                raise ValueError(
+                    "Не удалось однозначно связать доход с событием зарплаты. "
+                    "Доход не отменён."
+                )
+            if len(salary_events) == 1:
+                statements.append((
+                    """
+                    UPDATE salary_events
+                    SET actual_income = NULL,
+                        status = 'pending',
+                        completed_at = NULL
+                    WHERE id = ?
+                      AND status = 'income_received'
+                    """,
+                    (salary_events[0]["id"],),
+                ))
+
+        statements.append((
+            """
+            DELETE FROM operations
+            WHERE id = ? AND operation_type = 'income'
+            """,
+            (operation_id,),
+        ))
+    else:
+        # A confirmed mandatory payment is also a paid-status record.
+        payment_names = {
+            "Кредитная карта",
+            "Кредит на машину",
+            "Ипотека",
+            "Коммунальные услуги",
+        }
+        is_possible_payment = (
+            description in payment_names
+            or (category_id is None and debt_id is not None)
+        )
+
+        if is_possible_payment:
+            candidates = await fetch_all(
+                """
+                SELECT mp.id, mp.payment_name, mp.actual_amount, mp.debt_id
+                FROM mandatory_payments mp
+                JOIN salary_events se ON se.id = mp.salary_event_id
+                WHERE mp.status = 'paid'
+                  AND mp.payment_name = ?
+                  AND ROUND(mp.actual_amount, 2) = ROUND(?, 2)
+                  AND (
+                      mp.debt_id = ?
+                      OR (mp.debt_id IS NULL AND ? IS NULL)
+                  )
+                  AND substr(se.event_date, 1, 7) = ?
+                ORDER BY mp.id
+                """,
+                description,
+                amount,
+                debt_id,
+                debt_id,
+                operation_date[:7],
+            )
+            if len(candidates) > 1:
+                raise ValueError(
+                    "Не удалось однозначно определить обязательный платёж. "
+                    "Операция не отменена, чтобы не изменить не тот платёж."
+                )
+            if len(candidates) == 1:
+                payment_id = candidates[0]["id"]
+
+        statements.append((
+            "DELETE FROM stock_purchases WHERE operation_id = ?",
+            (operation_id,),
+        ))
+
+        if payment_id is not None:
+            statements.append((
+                """
+                UPDATE mandatory_payments
+                SET actual_amount = NULL, status = 'pending'
+                WHERE id = ? AND status = 'paid'
+                """,
+                (payment_id,),
+            ))
+            statements.append((
+                """
+                DELETE FROM operations
+                WHERE id = ?
+                  AND operation_type = 'expense'
+                  AND EXISTS (
+                      SELECT 1
+                      FROM mandatory_payments
+                      WHERE id = ?
+                        AND status = 'pending'
+                        AND actual_amount IS NULL
+                  )
+                """,
+                (operation_id, payment_id),
+            ))
+        else:
+            statements.append((
+                """
+                DELETE FROM operations
+                WHERE id = ? AND operation_type = 'expense'
+                """,
+                (operation_id,),
+            ))
+
+    await execute_many(statements)
+
+    remaining = await fetch_one(
+        "SELECT id FROM operations WHERE id = ?",
+        operation_id,
+    )
+    if remaining:
+        raise RuntimeError(
+            "Не удалось подтвердить отмену операции. Обнови историю перед повторной попыткой."
+        )
+
+    return {
+        "success": True,
+        "operation_id": operation_id,
+        "operation_type": operation_type,
+        "amount": amount,
+        "description": description or ("Доход" if operation_type == "income" else "Расход"),
+    }
+
+
 async def handle_web_api(path, request, env):
     method = (request.method or "GET").upper()
 
@@ -427,6 +617,11 @@ async def handle_web_api(path, request, env):
             if not VALID_MONTH.fullmatch(month):
                 return _json({"error": "Некорректный месяц."}, 400)
             return _json(await _dashboard(month))
+
+        if path == "/api/operation/cancel" and method == "POST":
+            body = await request.json()
+            result = await _cancel_operation(body.get("operation_id"))
+            return _json(result)
 
         if path == "/api/category-expenses" and method == "GET":
             parsed = urlparse(request.url)
