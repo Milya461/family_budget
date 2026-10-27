@@ -122,7 +122,7 @@ def _number(value, field_name="Сумма"):
 
 
 async def _remove_known_duplicate_utility_expense():
-    """Remove only the older of the two duplicated October utility operations, once."""
+    """Remove only the older of two duplicate October 2026 utility expenses."""
     await execute(
         """
         CREATE TABLE IF NOT EXISTS bot_settings (
@@ -131,16 +131,15 @@ async def _remove_known_duplicate_utility_expense():
         )
         """
     )
-    cleanup_key = "cleanup_duplicate_utility_expense_2026_10_v2"
+    cleanup_key = "cleanup_duplicate_utility_expense_2026_10_v3"
     if await fetch_value(
         "SELECT value FROM bot_settings WHERE key = ?",
         cleanup_key,
     ) == "done":
         return
 
-    # SQLite's built-in LOWER() does not lowercase Cyrillic reliably.
-    # Match common capitalization variants explicitly, and use the displayed
-    # amount range because the UI rounds values to whole rubles.
+    # SQLite LOWER() does not lowercase Cyrillic. Match common variants and
+    # the displayed amount range because the UI rounds the amount to rubles.
     candidates = await fetch_all(
         """
         SELECT id, amount, operation_date
@@ -159,35 +158,31 @@ async def _remove_known_duplicate_utility_expense():
         LIMIT 2
         """
     )
-    if not candidates:
+
+    # If only one matching row remains, leave it alone but don't mark cleanup
+    # as completed yet. If the duplicate is still there, it will be removed
+    # the next time the dashboard is loaded.
+    if len(candidates) < 2:
         return
 
-    statements = []
-    # History is displayed newest first: keep the first/top row, remove only
-    # the second/older duplicate if both entries are still present.
-    if len(candidates) >= 2:
-        duplicate_id = candidates[1]["id"]
-        statements.append(
-            (
-                """
-                DELETE FROM operations
-                WHERE id = ?
-                  AND operation_type = 'expense'
-                """,
-                (duplicate_id,),
-            )
-        )
-
-    statements.append(
+    duplicate_id = candidates[1]["id"]
+    await execute_many([
+        (
+            """
+            DELETE FROM operations
+            WHERE id = ?
+              AND operation_type = 'expense'
+            """,
+            (duplicate_id,),
+        ),
         (
             """
             INSERT OR REPLACE INTO bot_settings (key, value)
             VALUES (?, 'done')
             """,
             (cleanup_key,),
-        )
-    )
-    await execute_many(statements)
+        ),
+    ])
 
 
 async def _dashboard(month):
