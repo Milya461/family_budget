@@ -351,6 +351,55 @@ async def add_income(
         }
 
 
+def summarize_month_expenses(rows):
+    """Separate ordinary spending from explicitly identified required payments.
+
+    Ordinary expenses are included even when an older operation has no
+    category_id; otherwise the monthly "spent" metric can incorrectly show 0.
+    """
+    mandatory_totals = {
+        "Кредитная карта": 0.0,
+        "Кредит на машину": 0.0,
+        "Ипотека": 0.0,
+        "Коммунальные услуги": 0.0,
+    }
+    life_expenses = 0.0
+    other_expenses = 0.0
+
+    for row in rows:
+        amount = float(row.get("amount") or 0)
+        payment_kind = classify_mandatory_payment(
+            row.get("description") or "",
+            row.get("debt_name"),
+        )
+
+        if payment_kind in mandatory_totals:
+            mandatory_totals[payment_kind] += amount
+            continue
+
+        if row.get("debt_id") is not None:
+            continue
+
+        # Count uncategorized historic expenses in the monthly total too.
+        life_expenses += amount
+        if row.get("category_id") is None:
+            other_expenses += amount
+
+    credit_expenses = mandatory_totals["Кредитная карта"] + mandatory_totals["Кредит на машину"]
+    mortgage_expenses = mandatory_totals["Ипотека"]
+    utilities_expenses = mandatory_totals["Коммунальные услуги"]
+    mandatory_expenses = credit_expenses + mortgage_expenses + utilities_expenses
+
+    return {
+        "life_expenses": life_expenses,
+        "other_expenses": other_expenses,
+        "credit_expenses": credit_expenses,
+        "mortgage_expenses": mortgage_expenses,
+        "utilities_expenses": utilities_expenses,
+        "mandatory_expenses": mandatory_expenses,
+    }
+
+
 async def get_monthly_report(
     month: str | None = None,
 ):
@@ -443,46 +492,13 @@ async def get_monthly_report(
         month,
     )
 
-    mandatory_totals = {
-        "Кредитная карта": 0.0,
-        "Кредит на машину": 0.0,
-        "Ипотека": 0.0,
-        "Коммунальные услуги": 0.0,
-    }
-    life_expenses = 0.0
-    other_expenses = 0.0
-
-    for row in monthly_expense_rows:
-        amount = float(row.get("amount") or 0)
-        payment_kind = classify_mandatory_payment(
-            row.get("description") or "",
-            row.get("debt_name"),
-        )
-
-        if payment_kind in mandatory_totals:
-            mandatory_totals[payment_kind] += amount
-            continue
-
-        # Любой расход, связанный с долгом, не относится к бюджету на жизнь.
-        if row.get("debt_id") is not None:
-            continue
-
-        if row.get("category_id") is not None:
-            life_expenses += amount
-        else:
-            other_expenses += amount
-
-    credit_expenses = (
-        mandatory_totals["Кредитная карта"]
-        + mandatory_totals["Кредит на машину"]
-    )
-    mortgage_expenses = mandatory_totals["Ипотека"]
-    utilities_expenses = mandatory_totals["Коммунальные услуги"]
-    mandatory_expenses = (
-        credit_expenses
-        + mortgage_expenses
-        + utilities_expenses
-    )
+    expense_summary = summarize_month_expenses(monthly_expense_rows)
+    life_expenses = expense_summary["life_expenses"]
+    other_expenses = expense_summary["other_expenses"]
+    credit_expenses = expense_summary["credit_expenses"]
+    mortgage_expenses = expense_summary["mortgage_expenses"]
+    utilities_expenses = expense_summary["utilities_expenses"]
+    mandatory_expenses = expense_summary["mandatory_expenses"]
 
     category_allocations = await fetch_value(
         """
