@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 from workers import WorkerEntrypoint, Response, fetch
 
-from datetime import date
+from datetime import date, timedelta
 
 from app.db import (
     configure_d1,
@@ -35,6 +35,7 @@ from app.allocation import get_monthly_budget_summary
 from app.rebalancing import (
     ensure_rebalancing_tables,
     mark_stock_purchase,
+    rebalance_next_month,
 )
 from app.scheduler import daily_income_check
 from app.daily_reminders import handle_daily_expenses_callback
@@ -1756,6 +1757,36 @@ class Default(WorkerEntrypoint):
     async def scheduled(self, controller, env, ctx):
         configure_d1(env.DB)
         await ensure_runtime_tables()
+
+        today = get_moscow_today()
+
+        # Automatic limit adjustment runs on the first day of each month.
+        # rebalance_next_month is idempotent: the same source month can only
+        # be processed once, even if Cloudflare retries the scheduled event.
+        if today.day == 1:
+            previous_month = (
+                today.replace(day=1) - timedelta(days=1)
+            ).strftime("%Y-%m")
+            try:
+                result = await rebalance_next_month(
+                    source_month=previous_month,
+                )
+                if result.get("success"):
+                    print(
+                        "MONTHLY_BUDGET_REBALANCE:",
+                        json.dumps(result, ensure_ascii=False),
+                    )
+                else:
+                    print(
+                        "MONTHLY_BUDGET_REBALANCE_FAILED:",
+                        json.dumps(result, ensure_ascii=False),
+                    )
+            except Exception as error:
+                print(
+                    "MONTHLY_BUDGET_REBALANCE_ERROR:",
+                    repr(error),
+                    traceback.format_exc(),
+                )
 
         token = getattr(env, "BOT_TOKEN", None)
 
