@@ -5,23 +5,22 @@ CATEGORIES = {
     "Продукты": 25000,
     "Бензин": 7000,
     "Питомцы": 6000,
-    "Дом и быт": 5000,
     "Развлечения и кафе": 4000,
     "Транспорт": 2500,
-    "Красота": 1000,
+    "Красота": 5000,
     "Одежда": 4000,
     "Подписки": 500,
     "Здоровье": 3000,
     "Подарки и праздники": 2000,
 }
 
-DEPRECATED_CATEGORIES = ("Личные покупки", "Непредвиденные")
-CATEGORY_SETUP_VERSION = "2026-10-category-groups-v2-expense-remap"
+DEPRECATED_CATEGORIES = ("Личные покупки", "Непредвиденные", "Дом и быт")
+CATEGORY_SETUP_VERSION = "2026-10-category-groups-v3-remove-home-to-products"
 SAVINGS_RESET_VERSION = "2026-10-26-reset-savings-on-request"
 
 
 async def ensure_categories():
-    """Updates category names while keeping historic operations intact."""
+    """Updates categories while keeping historic operations and allocations intact."""
     await execute(
         """
         CREATE TABLE IF NOT EXISTS bot_settings (
@@ -70,15 +69,6 @@ async def ensure_categories():
     if version == CATEGORY_SETUP_VERSION:
         return
 
-    await execute(
-        """
-        UPDATE categories
-        SET is_active = 0
-        WHERE name IN (?, ?)
-        """,
-        *DEPRECATED_CATEGORIES,
-    )
-
     for name, limit in CATEGORIES.items():
         await execute(
             """
@@ -91,6 +81,50 @@ async def ensure_categories():
             name,
             limit,
         )
+
+    # Дом и быт полностью переносим в Продукты:
+    # - исторические расходы сохраняются;
+    # - распределения сохраняются;
+    # - сумма расходов и распределений добавляется к Продуктам;
+    # - сама категория отключается и больше не показывается.
+    home_id = await fetch_value(
+        "SELECT id FROM categories WHERE name = ? LIMIT 1",
+        "Дом и быт",
+    )
+    products_id = await fetch_value(
+        "SELECT id FROM categories WHERE name = ? LIMIT 1",
+        "Продукты",
+    )
+
+    if home_id is not None and products_id is not None:
+        await execute(
+            """
+            UPDATE operations
+            SET category_id = ?
+            WHERE category_id = ?
+            """,
+            products_id,
+            home_id,
+        )
+
+        await execute(
+            """
+            UPDATE monthly_allocations
+            SET category_id = ?
+            WHERE category_id = ?
+            """,
+            products_id,
+            home_id,
+        )
+
+    await execute(
+        """
+        UPDATE categories
+        SET is_active = 0
+        WHERE name IN (?, ?, ?)
+        """,
+        *DEPRECATED_CATEGORIES,
+    )
 
     # Переносим уже записанные траты в новые категории по их описанию.
     # Исторические операции не удаляются и их суммы не меняются.
