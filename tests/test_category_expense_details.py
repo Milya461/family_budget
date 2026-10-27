@@ -36,3 +36,123 @@ def test_category_expense_details_uses_complete_month_history(monkeypatch):
     assert "LIMIT" not in query
     assert "OPERATION_TYPE = 'EXPENSE'" in query
     assert fetch_all.await_args.args[1:] == (2, "2026-10")
+
+
+
+def test_cancel_selected_income_removes_its_allocations(monkeypatch):
+    operation = {
+        "id": 77,
+        "operation_type": "income",
+        "amount": 50000,
+        "category_id": None,
+        "debt_id": None,
+        "description": "Зарплата",
+        "operation_date": "2026-10-10",
+    }
+    fetch_one = AsyncMock(side_effect=[operation, None])
+    fetch_all = AsyncMock(return_value=[])
+    execute_many = AsyncMock()
+    monkeypatch.setattr(web_api, "ensure_rebalancing_tables", AsyncMock())
+    monkeypatch.setattr(web_api, "fetch_one", fetch_one)
+    monkeypatch.setattr(web_api, "fetch_all", fetch_all)
+    monkeypatch.setattr(web_api, "execute_many", execute_many)
+
+    result = asyncio.run(web_api._cancel_operation(77))
+
+    assert result["success"] is True
+    assert result["operation_type"] == "income"
+    statements = execute_many.await_args.args[0]
+    assert "DELETE FROM monthly_allocations WHERE source = ?" in statements[0][0]
+    assert statements[0][1] == ("income:77",)
+    assert "DELETE FROM allocation_batches WHERE source_key = ?" in statements[1][0]
+    assert "DELETE FROM operations" in statements[-1][0]
+
+
+def test_cancel_selected_expense_removes_stock_marker_and_operation(monkeypatch):
+    operation = {
+        "id": 88,
+        "operation_type": "expense",
+        "amount": 1290,
+        "category_id": 1,
+        "debt_id": None,
+        "description": "Продукты",
+        "operation_date": "2026-10-23",
+    }
+    fetch_one = AsyncMock(side_effect=[operation, None])
+    fetch_all = AsyncMock(return_value=[])
+    execute_many = AsyncMock()
+    monkeypatch.setattr(web_api, "ensure_rebalancing_tables", AsyncMock())
+    monkeypatch.setattr(web_api, "fetch_one", fetch_one)
+    monkeypatch.setattr(web_api, "fetch_all", fetch_all)
+    monkeypatch.setattr(web_api, "execute_many", execute_many)
+
+    result = asyncio.run(web_api._cancel_operation(88))
+
+    assert result["success"] is True
+    assert result["operation_type"] == "expense"
+    statements = execute_many.await_args.args[0]
+    assert "DELETE FROM stock_purchases WHERE operation_id = ?" in statements[0][0]
+    assert statements[0][1] == (88,)
+    assert "DELETE FROM operations" in statements[1][0]
+
+
+def test_cancel_selected_mandatory_payment_reopens_payment(monkeypatch):
+    operation = {
+        "id": 99,
+        "operation_type": "expense",
+        "amount": 10000,
+        "category_id": None,
+        "debt_id": None,
+        "description": "Коммунальные услуги",
+        "operation_date": "2026-10-25",
+    }
+    candidates = [{"id": 12, "payment_name": "Коммунальные услуги", "actual_amount": 10000, "debt_id": None}]
+    fetch_one = AsyncMock(side_effect=[operation, None])
+    fetch_all = AsyncMock(return_value=candidates)
+    execute_many = AsyncMock()
+    monkeypatch.setattr(web_api, "ensure_rebalancing_tables", AsyncMock())
+    monkeypatch.setattr(web_api, "fetch_one", fetch_one)
+    monkeypatch.setattr(web_api, "fetch_all", fetch_all)
+    monkeypatch.setattr(web_api, "execute_many", execute_many)
+
+    result = asyncio.run(web_api._cancel_operation(99))
+
+    assert result["success"] is True
+    statements = execute_many.await_args.args[0]
+    assert "UPDATE mandatory_payments" in statements[1][0]
+    assert statements[1][1] == (12,)
+    assert "status = 'pending'" in statements[1][0]
+    assert "EXISTS" in statements[2][0]
+    assert statements[2][1] == (99, 12)
+
+
+def test_cancel_selected_expense_refuses_ambiguous_payment(monkeypatch):
+    operation = {
+        "id": 100,
+        "operation_type": "expense",
+        "amount": 15000,
+        "category_id": None,
+        "debt_id": 2,
+        "description": "Кредит на машину",
+        "operation_date": "2026-10-25",
+    }
+    candidates = [
+        {"id": 12, "payment_name": "Кредит на машину", "actual_amount": 15000, "debt_id": 2},
+        {"id": 13, "payment_name": "Кредит на машину", "actual_amount": 15000, "debt_id": 2},
+    ]
+    fetch_one = AsyncMock(return_value=operation)
+    fetch_all = AsyncMock(return_value=candidates)
+    execute_many = AsyncMock()
+    monkeypatch.setattr(web_api, "ensure_rebalancing_tables", AsyncMock())
+    monkeypatch.setattr(web_api, "fetch_one", fetch_one)
+    monkeypatch.setattr(web_api, "fetch_all", fetch_all)
+    monkeypatch.setattr(web_api, "execute_many", execute_many)
+
+    try:
+        asyncio.run(web_api._cancel_operation(100))
+    except ValueError as error:
+        assert "однозначно" in str(error)
+    else:
+        raise AssertionError("Expected an ambiguous payment to be rejected")
+
+    execute_many.assert_not_awaited()
