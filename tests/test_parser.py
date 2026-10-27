@@ -2,6 +2,7 @@ from app.parser import (
     detect_category,
     detect_income,
     detect_debt,
+    classify_mandatory_payment,
     extract_amount,
 )
 
@@ -42,3 +43,16 @@ def test_detect_debt():
     assert detect_debt("кредитка 18000") == "Кредитная карта"
     assert detect_debt("кредит на машину 15000") == "Кредит на машину"
     assert detect_debt("ипотека 9000") == "Ипотека"
+
+
+
+def test_classify_mandatory_payments_for_dashboard_totals():
+    assert classify_mandatory_payment("кредитка 18000") == "Кредитная карта"
+    assert classify_mandatory_payment("платёж за машину 15000") == "Кредит на машину"
+    assert classify_mandatory_payment("ипотека 9000") == "Ипотека"
+    assert classify_mandatory_payment("коммуналка 10000") == "Коммунальные услуги"
+    assert classify_mandatory_payment("обычные продукты 1200") is None
+
+
+def test_classify_mandatory_payment_uses_debt_name_when_description_is_generic():
+    assert classify_mandatory_payment("обязательный платёж", "Ипотека") == "Ипотека"
