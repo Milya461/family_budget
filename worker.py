@@ -1757,6 +1757,7 @@ class Default(WorkerEntrypoint):
     async def scheduled(self, controller, env, ctx):
         configure_d1(env.DB)
         await ensure_runtime_tables()
+        await ensure_categories()
 
         today = get_moscow_today()
 
