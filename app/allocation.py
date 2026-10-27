@@ -7,6 +7,7 @@ from app.db import (
     fetch_value,
 )
 from app.rebalancing import ensure_rebalancing_tables
+from app.parser import classify_mandatory_payment
 
 
 MOSCOW_TIMEZONE = timezone(timedelta(hours=3))
@@ -73,19 +74,32 @@ async def get_monthly_category_spent(
     category_id: int,
     month: str,
 ):
-    value = await fetch_value(
+    rows = await fetch_all(
         """
-        SELECT COALESCE(SUM(amount), 0)
-        FROM operations
-        WHERE category_id = ?
-          AND operation_type = 'expense'
-          AND substr(operation_date, 1, 7) = ?
+        SELECT
+            o.amount,
+            o.description,
+            o.debt_id,
+            d.name AS debt_name
+        FROM operations o
+        LEFT JOIN debts d ON d.id = o.debt_id
+        WHERE o.category_id = ?
+          AND o.operation_type = 'expense'
+          AND substr(o.operation_date, 1, 7) = ?
         """,
         category_id,
         month,
     )
 
-    return value or 0
+    return sum(
+        float(row.get("amount") or 0)
+        for row in rows
+        if row.get("debt_id") is None
+        and classify_mandatory_payment(
+            row.get("description") or "",
+            row.get("debt_name"),
+        ) is None
+    )
 
 
 async def get_savings_target():
