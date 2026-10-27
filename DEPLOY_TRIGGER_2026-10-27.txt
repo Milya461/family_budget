@@ -1,0 +1,6 @@
+Deployment trigger: dashboard ordinary-expenses calculation is already implemented in app/budget.py.
+
+Expected dashboard rule:
+- "Потрачено за месяц" = ordinary expenses only.
+- Credits, mortgage and utilities are excluded from that value and shown separately.
+- October 2026: 97,519.51 ₽ total expenses - 65,496 ₽ mandatory payments = 32,023.51 ₽ ordinary expenses.
