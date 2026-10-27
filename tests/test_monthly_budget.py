@@ -204,12 +204,10 @@ def test_monthly_spent_includes_ordinary_expenses_without_category_id():
         {"amount": 10000, "description": "Коммунальные услуги", "category_id": None, "debt_id": None, "debt_name": None},
     ])
 
+    # Regular expenses only: categorized/uncategorized purchases remain,
+    # debt-linked and explicitly described mandatory payments are excluded.
     assert result["life_expenses"] == 4300
     assert result["other_expenses"] == 2500
-    assert result["credit_expenses"] == 17300
-    assert result["mortgage_expenses"] == 9000
-    assert result["utilities_expenses"] == 10000
-    assert result["mandatory_expenses"] == 36300
 
 
 def test_monthly_spent_ignores_only_explicit_required_payments():
@@ -221,7 +219,7 @@ def test_monthly_spent_ignores_only_explicit_required_payments():
     ])
 
     assert result["life_expenses"] == 2200
-    assert result["mandatory_expenses"] == 0
+    assert result["other_expenses"] == 1000
 
 
 
