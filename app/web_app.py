@@ -468,12 +468,18 @@ function fillCategories(categories){
 function render(data){
   state.data=data;state.month=data.month;
   var r=data.report,b=data.budget;
+  // Calculate this headline directly from the API's raw monthly total and
+  // separately identified required payments, not from a potentially stale
+  // life_expenses field.
+  var monthlyExpenses=Number(r.month_expenses||0);
+  var requiredPayments=Number(r.mandatory_expenses||0);
+  var lifeExpenses=Math.round(Math.max(monthlyExpenses-requiredPayments,0)*100)/100;
   $('monthPicker').value=data.month;
   $('heroMonth').textContent=data.month;
   $('mainBalance').textContent=money(r.main_account);
   $('savingsBalance').textContent=money(r.savings_balance);
   $('savingsNote').textContent='Отложено за месяц: '+money(r.monthly_savings);
-  $('spentTotal').textContent=money(r.life_expenses);
+  $('spentTotal').textContent=money(lifeExpenses);
   $('spentNote').textContent='Лимит бюджета: '+money(r.life_budget);
   $('mandatoryTotal').textContent=money(r.mandatory_expenses);
   var pending=data.payments.filter(function(p){return p.status!=='paid';}).length;
