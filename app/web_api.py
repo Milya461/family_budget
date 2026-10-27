@@ -121,8 +121,30 @@ def _number(value, field_name="Сумма"):
     return round(number, 2)
 
 
+async def _remove_known_duplicate_utility_expense():
+    """One-time cleanup: remove the lower duplicated October 2026 utility expense."""
+    await execute(
+        """
+        DELETE FROM operations
+        WHERE id = (
+            SELECT id
+            FROM operations
+            WHERE operation_type = 'expense'
+              AND ROUND(amount, 2) = 18195.00
+              AND substr(operation_date, 1, 7) = '2026-10'
+              AND category_id IS NULL
+              AND debt_id IS NULL
+              AND LOWER(COALESCE(description, '')) LIKE '%коммуналь%'
+            ORDER BY operation_date DESC, id DESC
+            LIMIT 1
+        )
+        """
+    )
+
+
 async def _dashboard(month):
     await ensure_rebalancing_tables()
+    await _remove_known_duplicate_utility_expense()
     report = await get_monthly_report(month)
     budget = await get_monthly_budget_summary(month)
 
