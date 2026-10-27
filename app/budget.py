@@ -341,7 +341,7 @@ async def add_income(
 
 
 def calculate_life_expenses(month_expenses, mandatory_expenses):
-    """All expenses for the month minus separately reported required payments."""
+    """Ordinary spending = all monthly expenses minus required payments."""
     return round(
         max(
             float(month_expenses or 0) - float(mandatory_expenses or 0),
@@ -352,11 +352,7 @@ def calculate_life_expenses(month_expenses, mandatory_expenses):
 
 
 def summarize_month_expenses(rows):
-    """Separate ordinary spending from explicitly identified required payments.
-
-    Ordinary expenses are included even when an older operation has no
-    category_id; otherwise the monthly "spent" metric can incorrectly show 0.
-    """
+    """Separate ordinary spending from explicitly identified required payments."""
     mandatory_totals = {
         "Кредитная карта": 0.0,
         "Кредит на машину": 0.0,
@@ -380,7 +376,6 @@ def summarize_month_expenses(rows):
         if row.get("debt_id") is not None:
             continue
 
-        # Count uncategorized historic expenses in the monthly total too.
         life_expenses += amount
         if row.get("category_id") is None:
             other_expenses += amount
@@ -492,13 +487,51 @@ async def get_monthly_report(
         month,
     )
 
+    # The mandatory_payments table is the authoritative source for required
+    # payments. This is important because a payment can be recorded in the
+    # salary/payment flow without its operations.description being a phrase
+    # that the text classifier can recognize. Ordinary spending is therefore
+    # always the monthly operations total minus the actual required payments.
+    mandatory_payment_rows = await fetch_all(
+        """
+        SELECT
+            mp.payment_name,
+            COALESCE(mp.actual_amount, 0) AS actual_amount
+        FROM mandatory_payments mp
+        JOIN salary_events se ON se.id = mp.salary_event_id
+        WHERE substr(se.event_date, 1, 7) = ?
+          AND mp.actual_amount IS NOT NULL
+          AND mp.status = 'paid'
+        """,
+        month,
+    )
+
+    mandatory_totals = {
+        "Кредитная карта": 0.0,
+        "Кредит на машину": 0.0,
+        "Ипотека": 0.0,
+        "Коммунальные услуги": 0.0,
+    }
+
+    for row in mandatory_payment_rows:
+        payment_name = str(row.get("payment_name") or "")
+        amount = float(row.get("actual_amount") or 0)
+        if payment_name in mandatory_totals:
+            mandatory_totals[payment_name] += amount
+
+    credit_expenses = round(
+        mandatory_totals["Кредитная карта"]
+        + mandatory_totals["Кредит на машину"],
+        2,
+    )
+    mortgage_expenses = round(mandatory_totals["Ипотека"], 2)
+    utilities_expenses = round(mandatory_totals["Коммунальные услуги"], 2)
+    mandatory_expenses = round(
+        credit_expenses + mortgage_expenses + utilities_expenses,
+        2,
+    )
+
     expense_summary = summarize_month_expenses(monthly_expense_rows)
-    life_expenses = expense_summary["life_expenses"]
-    other_expenses = expense_summary["other_expenses"]
-    credit_expenses = expense_summary["credit_expenses"]
-    mortgage_expenses = expense_summary["mortgage_expenses"]
-    utilities_expenses = expense_summary["utilities_expenses"]
-    mandatory_expenses = expense_summary["mandatory_expenses"]
 
     category_allocations = await fetch_value(
         """
@@ -622,6 +655,8 @@ async def get_monthly_report(
         else 0
     )
 
+    # This is the single definition used by the dashboard:
+    # ordinary expenses = all recorded expenses - actual required payments.
     life_expenses = calculate_life_expenses(
         month_expenses,
         mandatory_expenses,
@@ -689,7 +724,7 @@ async def get_monthly_report(
             + mortgage_expenses
         ),
         "life_expenses": life_expenses,
-        "other_expenses": other_expenses,
+        "other_expenses": expense_summary["other_expenses"],
         "category_allocations": category_allocations,
         "life_budget": life_budget,
         "life_remaining": life_remaining,
@@ -700,7 +735,6 @@ async def get_monthly_report(
         "savings_balance": savings_balance,
         "savings_target": savings_target,
         "savings_remaining": savings_remaining,
-        "main_account": main_account,
         "free_after_targets": free_after_targets,
-        "categories": category_report,
+        "category_report": category_report,
     }
