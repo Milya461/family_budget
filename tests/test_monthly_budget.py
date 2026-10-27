@@ -231,3 +231,20 @@ def test_life_expenses_are_all_monthly_expenses_minus_required_payments():
     assert calculate_life_expenses(97519.51, 65496.00) == 32023.51
     assert calculate_life_expenses(0, 0) == 0
     assert calculate_life_expenses(100, 150) == 0
+
+
+
+def test_monthly_spent_counts_categorized_ordinary_expense_even_if_debt_link_is_wrong():
+    from app.budget import summarize_month_expenses
+
+    result = summarize_month_expenses([
+        {"amount": 1200, "description": "продукты", "category_id": 1, "debt_id": 2, "debt_name": "Кредит на машину"},
+        {"amount": 800, "description": "бензин", "category_id": 2, "debt_id": 2, "debt_name": "Кредит на машину"},
+        {"amount": 17300, "description": "Кредитная карта", "category_id": None, "debt_id": 1, "debt_name": "Кредитная карта"},
+        {"amount": 9000, "description": "Ипотека", "category_id": None, "debt_id": None, "debt_name": None},
+        {"amount": 10000, "description": "Коммунальные услуги", "category_id": None, "debt_id": None, "debt_name": None},
+        {"amount": 450, "description": "такси", "category_id": None, "debt_id": None, "debt_name": None},
+    ])
+
+    assert result["life_expenses"] == 2450
+    assert result["other_expenses"] == 450
