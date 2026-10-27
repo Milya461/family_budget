@@ -325,6 +325,10 @@ tbody tr:last-child td{border-bottom:0}
   </article>
 </section>
 
+<section class="history-shortcut">
+  <button class="button" type="button" data-view-target="more">История доходов и расходов →</button>
+</section>
+
 <section class="app-view" data-view="more" id="view-more">
 <section class="section-heading">
   <div><h2>Ещё</h2><p>Реальный остаток, история операций и корректировки баланса.</p></div>

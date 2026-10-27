@@ -142,7 +142,7 @@ async def _dashboard(month):
         LEFT JOIN debts d ON d.id = o.debt_id
         LEFT JOIN stock_purchases sp ON sp.operation_id = o.id
         ORDER BY o.operation_date DESC, o.id DESC
-        LIMIT 40
+        LIMIT 500
         """
     )
 
