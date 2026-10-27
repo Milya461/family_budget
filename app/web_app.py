@@ -555,9 +555,9 @@ function renderOperations(operations){
       if(!window.confirm('Отменить '+kind+' «'+title+'» на сумму '+money(amount)+'? Запись исчезнет из истории, а связанные распределения или платёж будут скорректированы.'))return;
       try{
         setBusy(true);
-        await api('/api/operation/cancel',{method:'POST',body:JSON.stringify({operation_id:Number(button.getAttribute('data-cancel-operation'))})});
+        var cancellation=await api('/api/operation/cancel',{method:'POST',body:JSON.stringify({operation_id:Number(button.getAttribute('data-cancel-operation'))})});
         await reload();
-        showToast('Операция отменена.');
+        showToast(cancellation.warning||'Операция отменена.');
       }catch(error){showToast(error.message);}
       finally{setBusy(false);}
     });
