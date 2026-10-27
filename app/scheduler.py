@@ -38,28 +38,28 @@ async def ensure_reminder_tables():
     )
 
 
-async def daily_income_check(bot):
+async def daily_activity_check(bot):
     """
-    Ежедневно проверяет расходы за текущий день
-    по московскому времени и отправляет напоминание,
-    если расходов ещё нет.
+    В 21:00 по расписанию проверяет весь текущий день по Москве.
+    Напоминает внести и доходы, и расходы, только если за день
+    не было записано ни одной операции.
     """
     await ensure_reminder_tables()
 
     today_str = get_moscow_today().isoformat()
 
-    expense = await fetch_one(
+    activity = await fetch_one(
         """
         SELECT id
         FROM operations
-        WHERE operation_type = 'expense'
+        WHERE operation_type IN ('income', 'expense')
           AND operation_date = ?
         LIMIT 1
         """,
         today_str,
     )
 
-    if expense:
+    if activity:
         return
 
     # Не отправляем повторное напоминание за этот день,
@@ -83,23 +83,23 @@ async def daily_income_check(bot):
         return
 
     message = (
-        "⏰ Напоминание о расходах\n\n"
-        "За сегодня пока не записано ни одного расхода.\n\n"
-        "Если были траты — внеси их в бюджет.\n"
-        "Если сегодня ничего не покупали — отметь это кнопкой ниже."
+        "⏰ Напоминание о семейном бюджете\n\n"
+        "За сегодня пока не записано ни одного дохода или расхода.\n\n"
+        "Если сегодня были поступления или траты — внеси их в бюджет.\n"
+        "Например: «продукты 599» или «зарплата 50000»."
     )
 
     keyboard = {
         "inline_keyboard": [
             [
                 {
-                    "text": "✅ Сегодня без расходов",
+                    "text": "✅ Сегодня без операций",
                     "callback_data": "daily_expenses:none",
                 }
             ],
             [
                 {
-                    "text": "✍️ Забыла внести расходы",
+                    "text": "✍️ Нужно внести операции",
                     "callback_data": "daily_expenses:forgot",
                 }
             ],
@@ -121,7 +121,7 @@ async def daily_income_check(bot):
 
         except Exception as error:
             print(
-                "DAILY_EXPENSE_REMINDER_ERROR:",
+                "DAILY_ACTIVITY_REMINDER_ERROR:",
                 telegram_id,
                 repr(error),
             )
