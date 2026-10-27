@@ -192,20 +192,12 @@ async def _dashboard(month):
     report = await get_monthly_report(month)
     budget = await get_monthly_budget_summary(month)
 
-    # Reconcile the dashboard's life-spending value at the API boundary too.
-    # The UI shows every monthly expense less explicitly reported required
-    # payments, even if a stale report field exists in the deployed bundle.
-    report["life_expenses"] = round(
-        max(
-            float(report.get("month_expenses") or 0)
-            - float(report.get("mandatory_expenses") or 0),
-            0.0,
-        ),
-        2,
-    )
+    # Keep the ordinary-expense total calculated from expense rows in budget.py.
+    # Mandatory payment operations are already present in operations; subtracting
+    # the separate mandatory_payments table total here would count them twice.
     report["life_remaining"] = max(
         float(report.get("life_budget") or 0)
-        - report["life_expenses"],
+        - float(report.get("life_expenses") or 0),
         0.0,
     )
 
