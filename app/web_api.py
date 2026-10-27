@@ -122,24 +122,72 @@ def _number(value, field_name="Сумма"):
 
 
 async def _remove_known_duplicate_utility_expense():
-    """One-time cleanup: remove the lower duplicated October 2026 utility expense."""
+    """Remove only the older of the two duplicated October utility operations, once."""
     await execute(
         """
-        DELETE FROM operations
-        WHERE id = (
-            SELECT id
-            FROM operations
-            WHERE operation_type = 'expense'
-              AND ROUND(amount, 2) = 18195.00
-              AND substr(operation_date, 1, 7) = '2026-10'
-              AND category_id IS NULL
-              AND debt_id IS NULL
-              AND LOWER(COALESCE(description, '')) LIKE '%коммуналь%'
-            ORDER BY operation_date DESC, id DESC
-            LIMIT 1
+        CREATE TABLE IF NOT EXISTS bot_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
         )
         """
     )
+    cleanup_key = "cleanup_duplicate_utility_expense_2026_10_v2"
+    if await fetch_value(
+        "SELECT value FROM bot_settings WHERE key = ?",
+        cleanup_key,
+    ) == "done":
+        return
+
+    # SQLite's built-in LOWER() does not lowercase Cyrillic reliably.
+    # Match common capitalization variants explicitly, and use the displayed
+    # amount range because the UI rounds values to whole rubles.
+    candidates = await fetch_all(
+        """
+        SELECT id, amount, operation_date
+        FROM operations
+        WHERE operation_type = 'expense'
+          AND amount BETWEEN 18190 AND 18200
+          AND substr(operation_date, 1, 7) = '2026-10'
+          AND category_id IS NULL
+          AND debt_id IS NULL
+          AND (
+              COALESCE(description, '') LIKE '%коммуналь%'
+              OR COALESCE(description, '') LIKE '%Коммуналь%'
+              OR COALESCE(description, '') LIKE '%КОММУНАЛЬ%'
+          )
+        ORDER BY operation_date DESC, id DESC
+        LIMIT 2
+        """
+    )
+    if not candidates:
+        return
+
+    statements = []
+    # History is displayed newest first: keep the first/top row, remove only
+    # the second/older duplicate if both entries are still present.
+    if len(candidates) >= 2:
+        duplicate_id = candidates[1]["id"]
+        statements.append(
+            (
+                """
+                DELETE FROM operations
+                WHERE id = ?
+                  AND operation_type = 'expense'
+                """,
+                (duplicate_id,),
+            )
+        )
+
+    statements.append(
+        (
+            """
+            INSERT OR REPLACE INTO bot_settings (key, value)
+            VALUES (?, 'done')
+            """,
+            (cleanup_key,),
+        )
+    )
+    await execute_many(statements)
 
 
 async def _dashboard(month):
@@ -498,12 +546,15 @@ async def _cancel_operation(operation_id):
                 debt_id,
                 operation_date[:7],
             )
-            if len(candidates) != 1:
+            if len(candidates) > 1:
                 raise ValueError(
-                    "Не удалось однозначно определить обязательный платёж. "
-                    "Операция не отменена, чтобы не оставить платёж в неверном статусе."
+                    "Найдено несколько связанных обязательных платежей. "
+                    "Операция не отменена, чтобы не изменить не тот платёж."
                 )
-            payment_id = candidates[0]["id"]
+            # If no paid payment matches, this is a standalone history expense.
+            # Delete the selected expense without changing payment statuses.
+            if len(candidates) == 1:
+                payment_id = candidates[0]["id"]
 
         statements.append((
             "DELETE FROM stock_purchases WHERE operation_id = ?",
