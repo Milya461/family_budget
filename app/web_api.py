@@ -538,6 +538,7 @@ async def _cancel_operation(operation_id):
                       OR (mp.debt_id IS NULL AND ? IS NULL)
                   )
                   AND substr(se.event_date, 1, 7) = ?
+                  AND se.planned_day = CAST(substr(?, 9, 2) AS INTEGER)
                 ORDER BY mp.id
                 """,
                 description,
@@ -545,6 +546,7 @@ async def _cancel_operation(operation_id):
                 debt_id,
                 debt_id,
                 operation_date[:7],
+                operation_date,
             )
             if len(candidates) > 1:
                 raise ValueError(
