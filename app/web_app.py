@@ -180,6 +180,10 @@ tbody tr:last-child td{border-bottom:0}
 .balance-edit-panel .line-card{width:min(740px,100%);margin:0}
 .balance-edit-panel .form-grid{margin-top:14px}
 
+
+.operation-cancel{padding:7px 8px;font-size:9px;white-space:nowrap}
+.operation-cancel:hover{background:#6b3833;border-color:#6b3833;color:#fff}
+@media(max-width:600px){#operationTable .operation-cancel{font-size:8px;padding:6px}}
 </style>
 </head>
 <body>
@@ -339,8 +343,8 @@ tbody tr:last-child td{border-bottom:0}
 </section>
 <div class="table-wrap">
 <table>
-<thead><tr><th>Дата</th><th>Операция</th><th>Описание</th><th>Категория / долг</th><th class="right">Сумма</th></tr></thead>
-<tbody id="operationTable"><tr><td colspan="5" class="empty">Загружаю историю…</td></tr></tbody>
+<thead><tr><th>Дата</th><th>Операция</th><th>Описание</th><th>Категория / долг</th><th class="right">Сумма</th><th>Действие</th></tr></thead>
+<tbody id="operationTable"><tr><td colspan="6" class="empty">Загружаю историю…</td></tr></tbody>
 </table>
 </div>
 <section class="section-heading">
@@ -532,7 +536,7 @@ function renderPayments(payments){
   });
 }
 function renderOperations(operations){
-  if(!operations.length){$('operationTable').innerHTML='<tr><td colspan="5" class="empty">Операций пока нет.</td></tr>';return;}
+  if(!operations.length){$('operationTable').innerHTML='<tr><td colspan="6" class="empty">Операций пока нет.</td></tr>';return;}
   $('operationTable').innerHTML=operations.map(function(o){
     var isIncome=o.operation_type==='income';
     var type=isIncome?'Доход':'Расход';
@@ -540,8 +544,24 @@ function renderOperations(operations){
     var group=o.category_name||o.debt_name||'—';
     var isPetFood=!isIncome&&o.category_name==='Питомцы'&&/корм|грандорф|grandorf|jarvi|джарви/i.test(name);
     var stockButton=isPetFood?'<button class="button" type="button" data-stock-id="'+Number(o.id)+'" data-stock-months="'+Number(o.stock_months||0)+'">'+(o.stock_months?'Запас: '+Number(o.stock_months)+' мес.':'Отметить запас')+'</button>':'';
-    return '<tr><td>'+escapeHtml(o.operation_date)+'</td><td><span class="type">'+type+'</span></td><td>'+escapeHtml(name)+(stockButton?'<div style="margin-top:8px">'+stockButton+'</div>':'')+'</td><td>'+escapeHtml(group)+'</td><td class="right '+(isIncome?'positive':'negative')+'">'+(isIncome?'+':'−')+money(o.amount)+'</td></tr>';
+    var cancelButton='<button class="button operation-cancel" type="button" data-cancel-operation="'+Number(o.id)+'" data-cancel-kind="'+(isIncome?'income':'expense')+'" data-cancel-title="'+escapeHtml(name)+'" data-cancel-amount="'+Number(o.amount||0)+'">Отменить</button>';
+    return '<tr><td>'+escapeHtml(o.operation_date)+'</td><td><span class="type">'+type+'</span></td><td>'+escapeHtml(name)+(stockButton?'<div style="margin-top:8px">'+stockButton+'</div>':'')+'</td><td>'+escapeHtml(group)+'</td><td class="right '+(isIncome?'positive':'negative')+'">'+(isIncome?'+':'−')+money(o.amount)+'</td><td>'+cancelButton+'</td></tr>';
   }).join('');
+  Array.prototype.forEach.call($('operationTable').querySelectorAll('[data-cancel-operation]'),function(button){
+    button.addEventListener('click',async function(){
+      var kind=button.getAttribute('data-cancel-kind')==='income'?'доход':'расход';
+      var title=button.getAttribute('data-cancel-title')||kind;
+      var amount=Number(button.getAttribute('data-cancel-amount')||0);
+      if(!window.confirm('Отменить '+kind+' «'+title+'» на сумму '+money(amount)+'? Запись исчезнет из истории, а связанные распределения или платёж будут скорректированы.'))return;
+      try{
+        setBusy(true);
+        await api('/api/operation/cancel',{method:'POST',body:JSON.stringify({operation_id:Number(button.getAttribute('data-cancel-operation'))})});
+        await reload();
+        showToast('Операция отменена.');
+      }catch(error){showToast(error.message);}
+      finally{setBusy(false);}
+    });
+  });
   Array.prototype.forEach.call($('operationTable').querySelectorAll('[data-stock-id]'),function(button){
     button.addEventListener('click',async function(){
       var raw=window.prompt('На сколько месяцев хватит этого корма? Введи число от 1 до 24.',button.getAttribute('data-stock-months')||'3');
