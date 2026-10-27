@@ -80,6 +80,18 @@ label{display:block;margin:0 0 6px;font-size:10px;text-transform:uppercase;lette
 .stat .label{font-size:9px;text-transform:uppercase;letter-spacing:.13em;color:var(--muted)}
 .stat .value{font-size:clamp(24px,3vw,39px);font-weight:800;letter-spacing:-.07em;margin:10px 0 3px;white-space:nowrap}
 .stat .note{font-size:10px;color:var(--muted)}
+.mandatory-summary{padding:18px 0 21px;border-bottom:1px solid var(--line)}
+.mandatory-summary-head{display:flex;justify-content:space-between;align-items:end;gap:18px}
+.mandatory-summary h2{margin:0;font-size:15px;line-height:1.1;text-transform:uppercase;letter-spacing:-.04em}
+.mandatory-summary-head p{margin:5px 0 0;color:var(--muted);font-size:10px}
+.mandatory-total{text-align:right;white-space:nowrap}
+.mandatory-total span{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+.mandatory-total strong{display:block;margin-top:3px;font-size:23px;letter-spacing:-.05em}
+.mandatory-breakdown{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin-top:15px}
+.mandatory-item{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding-top:10px;border-top:1px solid var(--softline);font-size:11px}
+.mandatory-item span{color:var(--muted)}
+.mandatory-item strong{font-size:13px;white-space:nowrap}
+@media(max-width:600px){.mandatory-summary-head{align-items:flex-start;flex-direction:column}.mandatory-total{text-align:left}.mandatory-breakdown{grid-template-columns:1fr;gap:9px}}
 .content-grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(300px,.85fr);gap:28px;padding:0 0 20px}
 .category-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
 .category{border-bottom:1px solid var(--line);padding:17px 18px 16px 0;min-width:0}
@@ -237,6 +249,23 @@ tbody tr:last-child td{border-bottom:0}
   <div class="stat"><div class="label">Накоплено</div><div class="value" id="savingsBalance">—</div><div class="note" id="savingsNote">Копилка</div></div>
   <div class="stat"><div class="label">Потрачено за месяц</div><div class="value" id="spentTotal">—</div><div class="note" id="spentNote">Все категории</div></div>
   <div class="stat"><div class="label">Обязательные платежи</div><div class="value" id="paymentsCount">—</div><div class="note" id="paymentsNote">За выбранный месяц</div></div>
+</section>
+<section class="mandatory-summary" aria-labelledby="mandatorySummaryTitle">
+  <div class="mandatory-summary-head">
+    <div>
+      <h2 id="mandatorySummaryTitle">Кредиты, ипотека и коммуналка</h2>
+      <p>Расходы за выбранный месяц — отдельно от бюджета на жизнь</p>
+    </div>
+    <div class="mandatory-total">
+      <span>Всего обязательных платежей</span>
+      <strong id="mandatoryTotal">—</strong>
+    </div>
+  </div>
+  <div class="mandatory-breakdown">
+    <div class="mandatory-item"><span>Кредиты</span><strong id="creditExpenses">—</strong></div>
+    <div class="mandatory-item"><span>Ипотека</span><strong id="mortgageExpenses">—</strong></div>
+    <div class="mandatory-item"><span>Коммунальные услуги</span><strong id="utilitiesExpenses">—</strong></div>
+  </div>
 </section>
 <section class="balance-edit-panel" id="balanceEditPanel" aria-label="Редактирование реального остатка">
   <div class="line-card">
@@ -455,6 +484,10 @@ function render(data){
   $('savingsNote').textContent='Отложено за месяц: '+money(r.monthly_savings);
   $('spentTotal').textContent=money(r.life_expenses);
   $('spentNote').textContent='Лимит бюджета: '+money(r.life_budget);
+  $('creditExpenses').textContent=money(r.credit_expenses);
+  $('mortgageExpenses').textContent=money(r.mortgage_expenses);
+  $('utilitiesExpenses').textContent=money(r.utilities_expenses);
+  $('mandatoryTotal').textContent=money(r.mandatory_expenses);
   var pending=data.payments.filter(function(p){return p.status!=='paid';}).length;
   $('paymentsCount').textContent=String(pending);
   $('paymentsNote').textContent='Не оплачено · всего '+data.payments.length;
