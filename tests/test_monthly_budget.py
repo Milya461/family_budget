@@ -190,3 +190,35 @@ async def test_get_monthly_budget_summary(monkeypatch):
     assert result["savings_target"] == 23000
     assert result["savings_allocated"] == 5000
     assert result["savings_remaining"] == 18000
+
+
+
+def test_monthly_spent_includes_ordinary_expenses_without_category_id():
+    from app.budget import summarize_month_expenses
+
+    result = summarize_month_expenses([
+        {"amount": 2500, "description": "продукты", "category_id": None, "debt_id": None, "debt_name": None},
+        {"amount": 1800, "description": "корм котам", "category_id": 3, "debt_id": None, "debt_name": None},
+        {"amount": 17300, "description": "Кредитная карта", "category_id": None, "debt_id": 1, "debt_name": "Кредитная карта"},
+        {"amount": 9000, "description": "Ипотека", "category_id": None, "debt_id": 3, "debt_name": "Ипотека"},
+        {"amount": 10000, "description": "Коммунальные услуги", "category_id": None, "debt_id": None, "debt_name": None},
+    ])
+
+    assert result["life_expenses"] == 4300
+    assert result["other_expenses"] == 2500
+    assert result["credit_expenses"] == 17300
+    assert result["mortgage_expenses"] == 9000
+    assert result["utilities_expenses"] == 10000
+    assert result["mandatory_expenses"] == 36300
+
+
+def test_monthly_spent_ignores_only_explicit_required_payments():
+    from app.budget import summarize_month_expenses
+
+    result = summarize_month_expenses([
+        {"amount": 1000, "description": "покупка воды для котов", "category_id": None, "debt_id": None, "debt_name": None},
+        {"amount": 1200, "description": "ремонт квартиры", "category_id": 4, "debt_id": None, "debt_name": None},
+    ])
+
+    assert result["life_expenses"] == 2200
+    assert result["mandatory_expenses"] == 0
