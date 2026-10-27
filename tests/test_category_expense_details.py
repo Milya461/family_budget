@@ -151,7 +151,7 @@ def test_cancel_selected_expense_refuses_ambiguous_payment(monkeypatch):
     try:
         asyncio.run(web_api._cancel_operation(100))
     except ValueError as error:
-        assert "однозначно" in str(error)
+        assert "несколько" in str(error)
     else:
         raise AssertionError("Expected an ambiguous payment to be rejected")
 
