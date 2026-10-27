@@ -10,6 +10,7 @@ from app.db import (
 
 from app.allocation import allocate_income_remainder
 from app.rebalancing import ensure_rebalancing_tables
+from app.parser import classify_mandatory_payment
 
 
 MOSCOW_TIMEZONE = timezone(timedelta(hours=3))
@@ -73,19 +74,32 @@ async def get_category_limit(category_id, month=None):
 
 
 async def get_category_spent(category_id, month):
-    value = await fetch_value(
+    rows = await fetch_all(
         """
-        SELECT COALESCE(SUM(amount), 0)
-        FROM operations
-        WHERE category_id = ?
-          AND operation_type = 'expense'
-          AND substr(operation_date, 1, 7) = ?
+        SELECT
+            o.amount,
+            o.description,
+            o.debt_id,
+            d.name AS debt_name
+        FROM operations o
+        LEFT JOIN debts d ON d.id = o.debt_id
+        WHERE o.category_id = ?
+          AND o.operation_type = 'expense'
+          AND substr(o.operation_date, 1, 7) = ?
         """,
         category_id,
         month,
     )
 
-    return value or 0
+    return sum(
+        float(row.get("amount") or 0)
+        for row in rows
+        if row.get("debt_id") is None
+        and classify_mandatory_payment(
+            row.get("description") or "",
+            row.get("debt_name"),
+        ) is None
+    )
 
 
 async def check_expense(
@@ -413,90 +427,62 @@ async def get_monthly_report(
         """
     )
 
-    credit_expenses = await fetch_value(
+    monthly_expense_rows = await fetch_all(
         """
-        SELECT COALESCE(SUM(o.amount), 0)
+        SELECT
+            o.amount,
+            o.category_id,
+            o.debt_id,
+            o.description,
+            d.name AS debt_name
         FROM operations o
-        JOIN debts d
-          ON d.id = o.debt_id
+        LEFT JOIN debts d ON d.id = o.debt_id
         WHERE o.operation_type = 'expense'
-          AND d.name IN (
-              'Кредитная карта',
-              'Кредит на машину'
-          )
           AND substr(o.operation_date, 1, 7) = ?
         """,
         month,
-    ) or 0
+    )
 
-    mortgage_expenses = await fetch_value(
-        """
-        SELECT COALESCE(SUM(o.amount), 0)
-        FROM operations o
-        JOIN debts d
-          ON d.id = o.debt_id
-        WHERE o.operation_type = 'expense'
-          AND d.name = 'Ипотека'
-          AND substr(o.operation_date, 1, 7) = ?
-        """,
-        month,
-    ) or 0
+    mandatory_totals = {
+        "Кредитная карта": 0.0,
+        "Кредит на машину": 0.0,
+        "Ипотека": 0.0,
+        "Коммунальные услуги": 0.0,
+    }
+    life_expenses = 0.0
+    other_expenses = 0.0
 
-    utilities_expenses = await fetch_value(
-        """
-        SELECT COALESCE(SUM(amount), 0)
-        FROM operations
-        WHERE operation_type = 'expense'
-          AND description = 'Коммунальные услуги'
-          AND substr(operation_date, 1, 7) = ?
-        """,
-        month,
-    ) or 0
+    for row in monthly_expense_rows:
+        amount = float(row.get("amount") or 0)
+        payment_kind = classify_mandatory_payment(
+            row.get("description") or "",
+            row.get("debt_name"),
+        )
 
-    mandatory_expenses = await fetch_value(
-        """
-        SELECT COALESCE(SUM(o.amount), 0)
-        FROM operations o
-        LEFT JOIN debts d
-          ON d.id = o.debt_id
-        WHERE o.operation_type = 'expense'
-          AND (
-              d.id IS NOT NULL
-              OR o.description = 'Коммунальные услуги'
-          )
-          AND substr(o.operation_date, 1, 7) = ?
-        """,
-        month,
-    ) or 0
+        if payment_kind in mandatory_totals:
+            mandatory_totals[payment_kind] += amount
+            continue
 
-    life_expenses = await fetch_value(
-        """
-        SELECT COALESCE(SUM(amount), 0)
-        FROM operations
-        WHERE operation_type = 'expense'
-          AND category_id IS NOT NULL
-          AND substr(operation_date, 1, 7) = ?
-        """,
-        month,
-    ) or 0
+        # Любой расход, связанный с долгом, не относится к бюджету на жизнь.
+        if row.get("debt_id") is not None:
+            continue
 
-    other_expenses = await fetch_value(
-        """
-        SELECT COALESCE(SUM(o.amount), 0)
-        FROM operations o
-        LEFT JOIN debts d
-          ON d.id = o.debt_id
-        WHERE o.operation_type = 'expense'
-          AND o.category_id IS NULL
-          AND d.id IS NULL
-          AND (
-              o.description IS NULL
-              OR o.description != 'Коммунальные услуги'
-          )
-          AND substr(o.operation_date, 1, 7) = ?
-        """,
-        month,
-    ) or 0
+        if row.get("category_id") is not None:
+            life_expenses += amount
+        else:
+            other_expenses += amount
+
+    credit_expenses = (
+        mandatory_totals["Кредитная карта"]
+        + mandatory_totals["Кредит на машину"]
+    )
+    mortgage_expenses = mandatory_totals["Ипотека"]
+    utilities_expenses = mandatory_totals["Коммунальные услуги"]
+    mandatory_expenses = (
+        credit_expenses
+        + mortgage_expenses
+        + utilities_expenses
+    )
 
     category_allocations = await fetch_value(
         """
