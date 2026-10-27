@@ -318,6 +318,25 @@ def detect_debt(text: str):
     return None
 
 
+def classify_mandatory_payment(
+    description: str = "",
+    debt_name: str | None = None,
+):
+    """Возвращает вид обязательного платежа для исключения из расходов на жизнь."""
+    known_names = {
+        "кредитная карта": "Кредитная карта",
+        "кредит на машину": "Кредит на машину",
+        "ипотека": "Ипотека",
+        "коммунальные услуги": "Коммунальные услуги",
+    }
+
+    normalized_debt_name = normalize_text(debt_name or "")
+    if normalized_debt_name in known_names:
+        return known_names[normalized_debt_name]
+
+    return detect_debt(description or "")
+
+
 def detect_income(text: str) -> bool:
     """Проверяет, похоже ли сообщение на описание дохода."""
     normalized = normalize_text(text)
