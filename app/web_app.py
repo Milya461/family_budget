@@ -172,6 +172,14 @@ tbody tr:last-child td{border-bottom:0}
   .operation-forms .action-card .form-grid{grid-template-columns:minmax(0,1fr)}
 }
 
+
+.balance-edit-trigger{display:inline-flex;align-items:center;justify-content:center;margin-top:8px;padding:6px 9px;border:1px solid var(--ink);background:transparent;font-size:9px;text-transform:uppercase;letter-spacing:.06em}
+.balance-edit-trigger:hover{background:var(--ink);color:var(--paper)}
+.balance-edit-panel{display:none;padding:18px 0 22px;border-bottom:1px solid var(--line)}
+.balance-edit-panel.show{display:block}
+.balance-edit-panel .line-card{width:min(740px,100%);margin:0}
+.balance-edit-panel .form-grid{margin-top:14px}
+
 </style>
 </head>
 <body>
@@ -221,10 +229,24 @@ tbody tr:last-child td{border-bottom:0}
 </section>
 
 <section class="stats" aria-label="Главные показатели">
-  <div class="stat"><div class="label">Реальные деньги</div><div class="value" id="mainBalance">—</div><div class="note">Основной счёт после копилки</div></div>
+  <div class="stat stat-main-balance"><div class="label">Реальные деньги</div><div class="value" id="mainBalance">—</div><div class="note">Основной счёт после копилки</div><button class="balance-edit-trigger" id="balanceEditButton" type="button" aria-expanded="false" aria-controls="balanceEditPanel" aria-label="Изменить реальные деньги">Изменить</button></div>
   <div class="stat"><div class="label">Накоплено</div><div class="value" id="savingsBalance">—</div><div class="note" id="savingsNote">Копилка</div></div>
   <div class="stat"><div class="label">Потрачено за месяц</div><div class="value" id="spentTotal">—</div><div class="note" id="spentNote">Все категории</div></div>
   <div class="stat"><div class="label">Обязательные платежи</div><div class="value" id="paymentsCount">—</div><div class="note" id="paymentsNote">За выбранный месяц</div></div>
+</section>
+<section class="balance-edit-panel" id="balanceEditPanel" aria-label="Редактирование реального остатка">
+  <div class="line-card">
+    <h3>Изменить реальные деньги</h3>
+    <p class="sub">Введи сумму, которая действительно есть на основном счёте. История доходов и расходов не изменится.</p>
+    <form id="balanceForm" class="form-grid">
+      <div class="form-field wide">
+        <label for="balanceInput">Фактический остаток, ₽</label>
+        <input id="balanceInput" type="number" min="0" step="0.01" placeholder="Укажи фактическую сумму" required>
+      </div>
+      <div class="form-field wide"><button class="button primary" type="submit">Сохранить остаток</button></div>
+    </form>
+    <div class="metric-line" style="margin-top:10px"><span>Последняя корректировка</span><strong id="lastAdjustment">—</strong></div>
+  </div>
 </section>
 
 </section>
@@ -306,16 +328,6 @@ tbody tr:last-child td{border-bottom:0}
 <section class="app-view" data-view="more" id="view-more">
 <section class="section-heading">
   <div><h2>Ещё</h2><p>Реальный остаток, история операций и корректировки баланса.</p></div>
-</section>
-<section class="balance-layout">
-<div class="line-card">
-      <h3>Реальные деньги</h3><p class="sub">Укажите сумму, которая действительно есть на основном счёте. История расходов и доходов останется без изменений.</p>
-      <form id="balanceForm" class="form-grid">
-        <div class="form-field wide"><label for="balanceInput">Фактический остаток, ₽</label><input id="balanceInput" type="number" min="0" step="0.01" placeholder="Введите сумму" required></div>
-        <div class="form-field wide"><button class="button" type="submit">Сохранить реальный остаток</button></div>
-      </form>
-      <div class="metric-line" style="margin-top:10px"><span>Последняя корректировка</span><strong id="lastAdjustment">—</strong></div>
-    </div>
 </section>
 <section class="section-heading" id="history">
   <div><h2>История операций</h2><p>Доходы, расходы и назначения зафиксированных корректировок</p></div>
@@ -440,7 +452,9 @@ function render(data){
   $('savingsAmountLarge').textContent=money(r.savings_balance);
   $('savingsTarget').textContent=money(r.savings_target);
   $('savingsRemaining').textContent=money(r.savings_remaining);
-  $('balanceInput').value=Number(r.main_account||0).toFixed(2);
+  var actualBalance=Number(r.main_account);
+  $('balanceInput').value=Number.isFinite(actualBalance)&&actualBalance>=0?actualBalance.toFixed(2):'';
+  $('balanceInput').placeholder=Number.isFinite(actualBalance)&&actualBalance<0?'Укажи фактическую сумму':'Например, 3264.99';
   $('lastAdjustment').textContent=data.adjustments.length?money(data.adjustments[0].target_balance):'Не менялся';
   fillCategories(r.categories||[]);
   renderCategories(r.categories||[]);
@@ -590,6 +604,13 @@ $('savingsForm').addEventListener('submit',function(event){
   event.preventDefault();
   if(!pendingSavingsRequestId)pendingSavingsRequestId=window.crypto&&window.crypto.randomUUID?window.crypto.randomUUID():('req_'+Date.now()+'_'+Math.random().toString(36).slice(2));
   submitForm(event.currentTarget,'/api/savings',function(){return {amount:$('savingsInput').value,request_id:pendingSavingsRequestId};},'Пополнение копилки подтверждено.',function(){pendingSavingsRequestId='';});
+});
+$('balanceEditButton').addEventListener('click',function(){
+  var panel=$('balanceEditPanel');
+  var willOpen=!panel.classList.contains('show');
+  panel.classList.toggle('show',willOpen);
+  this.setAttribute('aria-expanded',willOpen?'true':'false');
+  if(willOpen)$('balanceInput').focus();
 });
 $('balanceForm').addEventListener('submit',function(event){event.preventDefault();var target=Number($('balanceInput').value);if(!Number.isFinite(target)||target<0){showToast('Введи реальный остаток не меньше нуля.');return;}if(!window.confirm('Установить реальный остаток '+money(target)+'? История доходов и расходов не изменится.'))return;submitForm(event.currentTarget,'/api/balance',function(){return {amount:target};},'Реальный остаток обновлён.');});
 (async function init(){
