@@ -156,3 +156,32 @@ def test_cancel_selected_expense_refuses_ambiguous_payment(monkeypatch):
         raise AssertionError("Expected an ambiguous payment to be rejected")
 
     execute_many.assert_not_awaited()
+
+
+
+def test_cancel_selected_expense_refuses_unmatched_payment(monkeypatch):
+    operation = {
+        "id": 101,
+        "operation_type": "expense",
+        "amount": 18000,
+        "category_id": None,
+        "debt_id": None,
+        "description": "Кредитная карта",
+        "operation_date": "2026-10-10",
+    }
+    fetch_one = AsyncMock(return_value=operation)
+    fetch_all = AsyncMock(return_value=[])
+    execute_many = AsyncMock()
+    monkeypatch.setattr(web_api, "ensure_rebalancing_tables", AsyncMock())
+    monkeypatch.setattr(web_api, "fetch_one", fetch_one)
+    monkeypatch.setattr(web_api, "fetch_all", fetch_all)
+    monkeypatch.setattr(web_api, "execute_many", execute_many)
+
+    try:
+        asyncio.run(web_api._cancel_operation(101))
+    except ValueError as error:
+        assert "обязательный платёж" in str(error)
+    else:
+        raise AssertionError("Expected unmatched mandatory payment to be rejected")
+
+    execute_many.assert_not_awaited()
