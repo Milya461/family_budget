@@ -186,9 +186,109 @@ async def _remove_known_duplicate_utility_expense():
     ])
 
 
+async def _move_coat_expense_to_clothing():
+    """One-time, narrowly scoped reclassification requested on 2026-10-29."""
+    migration_key = "reclassify_coat_expense_6999_2026_10_v1"
+
+    await execute(
+        """
+        CREATE TABLE IF NOT EXISTS bot_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """
+    )
+
+    if await fetch_value(
+        "SELECT value FROM bot_settings WHERE key = ?",
+        migration_key,
+    ) == "done":
+        return
+
+    # Match the October expense by its current category and amount.
+    # Keep its operation ID, date, amount and description unchanged.
+    rows = await fetch_all(
+        """
+        SELECT o.id, o.category_id
+        FROM operations o
+        JOIN categories c ON c.id = o.category_id
+        WHERE o.operation_type = 'expense'
+          AND ABS(o.amount - 6999) < 0.005
+          AND c.name = 'Личные покупки'
+          AND o.operation_date >= '2026-10-01'
+          AND o.operation_date < '2026-11-01'
+        ORDER BY o.id
+        """
+    )
+
+    # Never guess if the match is missing or ambiguous.
+    if len(rows) != 1:
+        print(
+            "COAT_EXPENSE_RECLASSIFICATION_SKIPPED:",
+            {"matches": len(rows)},
+        )
+        return
+
+    clothing_category_id = await fetch_value(
+        "SELECT id FROM categories WHERE name = 'Одежда' AND is_active = 1"
+    )
+    if clothing_category_id is None:
+        print("COAT_EXPENSE_RECLASSIFICATION_SKIPPED: clothing category missing")
+        return
+
+    operation_id = rows[0]["id"]
+    source_category_id = rows[0]["category_id"]
+
+    await execute(
+        """
+        UPDATE operations
+        SET category_id = ?
+        WHERE id = ?
+          AND operation_type = 'expense'
+          AND category_id = ?
+          AND ABS(amount - 6999) < 0.005
+          AND operation_date >= '2026-10-01'
+          AND operation_date < '2026-11-01'
+        """,
+        clothing_category_id,
+        operation_id,
+        source_category_id,
+    )
+
+    updated = await fetch_one(
+        """
+        SELECT id
+        FROM operations
+        WHERE id = ?
+          AND category_id = ?
+          AND operation_type = 'expense'
+          AND ABS(amount - 6999) < 0.005
+        """,
+        operation_id,
+        clothing_category_id,
+    )
+    if not updated:
+        print("COAT_EXPENSE_RECLASSIFICATION_FAILED:", operation_id)
+        return
+
+    await execute(
+        """
+        INSERT INTO bot_settings (key, value)
+        VALUES (?, 'done')
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """,
+        migration_key,
+    )
+    print(
+        "COAT_EXPENSE_RECLASSIFIED:",
+        {"operation_id": operation_id, "amount": 6999, "category": "Одежда"},
+    )
+
+
 async def _dashboard(month):
     await ensure_rebalancing_tables()
     await _remove_known_duplicate_utility_expense()
+    await _move_coat_expense_to_clothing()
     report = await get_monthly_report(month)
     budget = await get_monthly_budget_summary(month)
 
