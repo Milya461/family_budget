@@ -334,6 +334,7 @@ tbody tr:last-child td{border-bottom:0}
     <div class="action-number">01</div><h3>Добавить расход</h3><p>Категория, сумма и описание траты.</p>
     <form id="expenseForm" class="form-grid">
       <div class="form-field wide"><label for="expenseAmount">Сумма, ₽</label><input id="expenseAmount" type="number" step="0.01" min="0.01" placeholder="599" required></div>
+      <div class="form-field wide"><label for="expenseDate">Дата расхода</label><input id="expenseDate" type="date" required></div>
       <div class="form-field wide"><label for="expenseCategory">Категория</label><select id="expenseCategory" required><option value="">Загрузка…</option></select></div>
       <div class="form-field wide"><label for="expenseDescription">Описание</label><input id="expenseDescription" maxlength="200" placeholder="Продукты, корм котам…"></div>
       <div class="form-field wide"><button class="button primary" type="submit">Записать расход</button></div>
@@ -343,6 +344,7 @@ tbody tr:last-child td{border-bottom:0}
     <div class="action-number">02</div><h3>Добавить доход</h3><p>Зарплата, аванс, кэшбэк или другой доход.</p>
     <form id="incomeForm" class="form-grid">
       <div class="form-field wide"><label for="incomeAmount">Сумма, ₽</label><input id="incomeAmount" type="number" min="0.01" step="0.01" placeholder="50000" required></div>
+      <div class="form-field wide"><label for="incomeDate">Дата дохода</label><input id="incomeDate" type="date" required></div>
       <div class="form-field wide"><label for="incomeDescription">Источник дохода</label><input id="incomeDescription" maxlength="100" placeholder="Зарплата, кэшбэк…" required></div>
       <div class="form-field wide"><button class="button" type="submit">Записать доход</button></div>
     </form>
@@ -601,6 +603,9 @@ function renderAdjustments(items){
     return '<tr><td>'+escapeHtml(a.created_at)+'</td><td>'+escapeHtml(a.note||'Корректировка')+'</td><td>'+money(a.previous_balance)+'</td><td>'+money(a.target_balance)+'</td><td class="right '+(Number(a.delta)>=0?'positive':'negative')+'">'+(Number(a.delta)>=0?'+':'−')+money(Math.abs(Number(a.delta)))+'</td></tr>';
   }).join('');
 }
+function moscowToday(){
+  return new Date(Date.now()+3*60*60*1000).toISOString().slice(0,10);
+}
 async function reload(month){
   var selected=month||$('monthPicker').value;
   var path='/api/dashboard';
@@ -615,6 +620,8 @@ async function submitForm(form, path, buildBody, successMessage, onSuccess){
     var body=buildBody();
     var result=await api(path,{method:'POST',body:JSON.stringify(body)});
     form.reset();
+    if(form.id==='expenseForm')$('expenseDate').value=moscowToday();
+    if(form.id==='incomeForm')$('incomeDate').value=moscowToday();
     if(onSuccess)onSuccess(result);
     var warning=result&&(result.allocation_warning||(result.result&&result.result.allocation_warning));
     showToast(warning?successMessage+' '+warning:successMessage);
@@ -643,8 +650,8 @@ Array.prototype.forEach.call(document.querySelectorAll('[data-view-target]'),fun
 });
 $('monthPicker').addEventListener('change',async function(){try{setBusy(true);await reload($('monthPicker').value);}catch(error){showToast(error.message);}finally{setBusy(false);}});
 $('categoryDetailClose').addEventListener('click',function(){renderCategoryDetail('');window.scrollTo({top:0,behavior:'smooth'});});
-$('expenseForm').addEventListener('submit',function(event){event.preventDefault();submitForm(event.currentTarget,'/api/expense',function(){return {amount:$('expenseAmount').value,category:$('expenseCategory').value,description:$('expenseDescription').value};},'Расход записан.');});
-$('incomeForm').addEventListener('submit',function(event){event.preventDefault();submitForm(event.currentTarget,'/api/income',function(){return {amount:$('incomeAmount').value,description:$('incomeDescription').value};},'Доход записан.');});
+$('expenseForm').addEventListener('submit',function(event){event.preventDefault();submitForm(event.currentTarget,'/api/expense',function(){return {amount:$('expenseAmount').value,category:$('expenseCategory').value,description:$('expenseDescription').value,operation_date:$('expenseDate').value};},'Расход записан.');});
+$('incomeForm').addEventListener('submit',function(event){event.preventDefault();submitForm(event.currentTarget,'/api/income',function(){return {amount:$('incomeAmount').value,description:$('incomeDescription').value,operation_date:$('incomeDate').value};},'Доход записан.');});
 var pendingSavingsRequestId='';
 $('savingsForm').addEventListener('submit',function(event){
   event.preventDefault();
@@ -659,6 +666,11 @@ $('balanceEditButton').addEventListener('click',function(){
   if(willOpen)$('balanceInput').focus();
 });
 $('balanceForm').addEventListener('submit',function(event){event.preventDefault();var target=Number($('balanceInput').value);if(!Number.isFinite(target)||target<0){showToast('Введи реальный остаток не меньше нуля.');return;}if(!window.confirm('Установить реальный остаток '+money(target)+'? История доходов и расходов не изменится.'))return;submitForm(event.currentTarget,'/api/balance',function(){return {amount:target};},'Реальный остаток обновлён.');});
+(function initOperationDates(){
+  var today=moscowToday();
+  $('expenseDate').value=today;
+  $('incomeDate').value=today;
+})();
 (async function init(){
   try{await reload();}catch(error){if(error.message!=='Нужно войти заново.')showToast(error.message);}
 })();
