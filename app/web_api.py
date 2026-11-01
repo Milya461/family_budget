@@ -289,6 +289,85 @@ async def _move_coat_expense_to_clothing():
     )
 
 
+async def _record_october_mortgage_payment():
+    """One-time user-requested mortgage payment dated 2026-10-31."""
+    migration_key = "record_mortgage_payment_9400_2026_10_31_v1"
+
+    await execute(
+        """
+        CREATE TABLE IF NOT EXISTS bot_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """
+    )
+
+    if await fetch_value(
+        "SELECT value FROM bot_settings WHERE key = ?",
+        migration_key,
+    ) == "done":
+        return
+
+    payments = await fetch_all(
+        """
+        SELECT mp.id, mp.payment_name, mp.status
+        FROM mandatory_payments mp
+        JOIN salary_events se ON se.id = mp.salary_event_id
+        WHERE mp.payment_name = 'Ипотека'
+          AND mp.status != 'paid'
+          AND substr(se.event_date, 1, 7) = '2026-10'
+        ORDER BY mp.id
+        """
+    )
+
+    # Do not guess if October contains zero or multiple unpaid mortgage rows.
+    if len(payments) != 1:
+        print(
+            "OCTOBER_MORTGAGE_PAYMENT_SKIPPED:",
+            {"matching_unpaid_payments": len(payments)},
+        )
+        return
+
+    telegram_id = await fetch_value(
+        """
+        SELECT telegram_id
+        FROM users
+        WHERE telegram_id IS NOT NULL
+        ORDER BY id
+        LIMIT 1
+        """
+    )
+    if telegram_id is None:
+        print("OCTOBER_MORTGAGE_PAYMENT_SKIPPED: no linked user")
+        return
+
+    result = await record_actual_payment(
+        payment_id=int(payments[0]["id"]),
+        actual_amount=9400,
+        telegram_id=int(telegram_id),
+        operation_date="2026-10-31",
+    )
+    if not result or not result.get("success"):
+        print(
+            "OCTOBER_MORTGAGE_PAYMENT_FAILED:",
+            json.dumps(result or {}, ensure_ascii=False),
+        )
+        return
+
+    await execute(
+        """
+        INSERT INTO bot_settings (key, value)
+        VALUES (?, 'done')
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """,
+        migration_key,
+    )
+    print(
+        "OCTOBER_MORTGAGE_PAYMENT_RECORDED:",
+        json.dumps(result, ensure_ascii=False),
+    )
+
+
 async def _dashboard(month):
     await ensure_rebalancing_tables()
 
@@ -322,6 +401,7 @@ async def _dashboard(month):
             )
     await _remove_known_duplicate_utility_expense()
     await _move_coat_expense_to_clothing()
+    await _record_october_mortgage_payment()
     report = await get_monthly_report(month)
     budget = await get_monthly_budget_summary(month)
 
@@ -965,10 +1045,21 @@ async def handle_web_api(path, request, env):
                 raise ValueError(
                     "В общей базе пока нет пользователя. Один раз запусти старого бота командой /start."
                 )
+            raw_operation_date = str(body.get("operation_date") or "").strip()
+            try:
+                operation_date = (
+                    date.fromisoformat(raw_operation_date).isoformat()
+                    if raw_operation_date
+                    else None
+                )
+            except ValueError:
+                raise ValueError("Укажи корректную дату операции.")
+
             result = await record_actual_payment(
                 payment_id=payment_id,
                 actual_amount=amount,
                 telegram_id=int(telegram_id),
+                operation_date=operation_date,
             )
             if not result or not result.get("success"):
                 return _json({"error": (result or {}).get("error", "Не удалось записать платёж.")}, 400)
