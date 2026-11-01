@@ -443,6 +443,136 @@ async def _apply_november_category_limits():
     )
 
 
+async def _reclassify_november_trial_expenses():
+    """Move 840 RUB from November groceries into the three trial categories once."""
+    migration_key = "reclassify_trial_categories_2026_11_v1"
+    transfers = (
+        ("Алкоголь", 270.0),
+        ("Энергетики", 340.0),
+        ("Курение", 230.0),
+    )
+    total = sum(amount for _, amount in transfers)
+
+    await execute(
+        """
+        CREATE TABLE IF NOT EXISTS bot_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """
+    )
+    if await fetch_value(
+        "SELECT value FROM bot_settings WHERE key = ?",
+        migration_key,
+    ) == "done":
+        return
+
+    category_rows = await fetch_all(
+        """
+        SELECT id, name
+        FROM categories
+        WHERE is_active = 1
+          AND name IN ('Продукты', 'Алкоголь', 'Энергетики', 'Курение')
+        """
+    )
+    category_ids = {row["name"]: int(row["id"]) for row in category_rows}
+    required = {"Продукты", "Алкоголь", "Энергетики", "Курение"}
+    if not required.issubset(category_ids):
+        print("TRIAL_EXPENSE_RECLASSIFICATION_SKIPPED: missing categories")
+        return
+
+    source_rows = await fetch_all(
+        """
+        SELECT id, amount
+        FROM operations
+        WHERE operation_type = 'expense'
+          AND category_id = ?
+          AND substr(operation_date, 1, 7) = '2026-11'
+        ORDER BY operation_date DESC, id DESC
+        """,
+        category_ids["Продукты"],
+    )
+    available = sum(float(row["amount"] or 0) for row in source_rows)
+    if available + 0.000001 < total:
+        print(
+            "TRIAL_EXPENSE_RECLASSIFICATION_SKIPPED:",
+            json.dumps(
+                {"required": total, "available_in_products": available},
+                ensure_ascii=False,
+            ),
+        )
+        return
+
+    user_id = await _get_database_user_id()
+    statements = []
+    remaining = total
+    for row in source_rows:
+        if remaining <= 0.000001:
+            break
+        original = float(row["amount"] or 0)
+        deduction = min(original, remaining)
+        new_amount = round(original - deduction, 2)
+        if new_amount <= 0.000001:
+            statements.append(
+                (
+                    "DELETE FROM operations WHERE id = ? AND category_id = ?",
+                    (int(row["id"]), category_ids["Продукты"]),
+                )
+            )
+        else:
+            statements.append(
+                (
+                    "UPDATE operations SET amount = ? WHERE id = ? AND category_id = ?",
+                    (new_amount, int(row["id"]), category_ids["Продукты"]),
+                )
+            )
+        remaining = round(remaining - deduction, 2)
+
+    operation_date = "2026-11-01"
+    for category_name, amount in transfers:
+        statements.append(
+            (
+                """
+                INSERT INTO operations (
+                    user_id,
+                    operation_type,
+                    amount,
+                    category_id,
+                    description,
+                    operation_date
+                )
+                VALUES (?, 'expense', ?, ?, ?, ?)
+                """,
+                (
+                    user_id,
+                    amount,
+                    category_ids[category_name],
+                    "Перенос суммы из категории «Продукты»",
+                    operation_date,
+                ),
+            )
+        )
+
+    statements.append(
+        (
+            """
+            INSERT INTO bot_settings (key, value)
+            VALUES (?, 'done')
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            (migration_key,),
+        )
+    )
+    await execute_many(statements)
+    print(
+        "TRIAL_EXPENSE_RECLASSIFICATION_APPLIED:",
+        json.dumps(
+            {"date": operation_date, "transfers": transfers, "total": total},
+            ensure_ascii=False,
+        ),
+    )
+
+
 async def _dashboard(month):
     await ensure_rebalancing_tables()
 
@@ -477,6 +607,7 @@ async def _dashboard(month):
     if month == "2026-11":
         # Re-apply after the automatic rebalance so these explicit limits win.
         await _apply_november_category_limits()
+        await _reclassify_november_trial_expenses()
 
     await _remove_known_duplicate_utility_expense()
     await _move_coat_expense_to_clothing()
