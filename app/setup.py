@@ -12,10 +12,13 @@ CATEGORIES = {
     "Подписки": 500,
     "Здоровье": 3000,
     "Подарки и праздники": 2000,
+    "Алкоголь": 0,
+    "Энергетики": 0,
+    "Курение": 0,
 }
 
 DEPRECATED_CATEGORIES = ("Личные покупки", "Непредвиденные", "Дом и быт")
-CATEGORY_SETUP_VERSION = "2026-10-category-groups-v3-remove-home-to-products"
+CATEGORY_SETUP_VERSION = "2026-11-category-groups-v4-no-limit-trial"
 SAVINGS_RESET_VERSION = "2026-10-26-reset-savings-on-request"
 
 
