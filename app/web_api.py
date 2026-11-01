@@ -368,8 +368,101 @@ async def _record_october_mortgage_payment():
     )
 
 
+async def _apply_november_category_limits():
+    """Apply the user's explicit November 2026 category limits once."""
+    month = "2026-11"
+    migration_key = "manual_category_limits_2026_11_v1"
+    limits = {
+        "Продукты": 35000,
+        "Бензин": 15000,
+        "Питомцы": 6000,
+        "Развлечения и кафе": 4000,
+        "Здоровье": 3000,
+        "Подарки и праздники": 500,
+        "Транспорт": 2500,
+        "Красота": 5000,
+        "Одежда": 4000,
+        "Подписки": 1000,
+    }
+
+    await ensure_rebalancing_tables()
+    await execute(
+        """
+        CREATE TABLE IF NOT EXISTS bot_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """
+    )
+
+    if await fetch_value(
+        "SELECT value FROM bot_settings WHERE key = ?",
+        migration_key,
+    ) == "done":
+        return
+
+    rows = await fetch_all(
+        """
+        SELECT id, name
+        FROM categories
+        WHERE is_active = 1
+        """
+    )
+    category_ids = {row["name"]: row["id"] for row in rows}
+    missing = [name for name in limits if name not in category_ids]
+    if missing:
+        print(
+            "NOVEMBER_CATEGORY_LIMITS_SKIPPED:",
+            json.dumps({"missing_categories": missing}, ensure_ascii=False),
+        )
+        return
+
+    statements = []
+    for name, amount in limits.items():
+        statements.append(
+            (
+                """
+                INSERT INTO monthly_category_budgets (
+                    month,
+                    category_id,
+                    monthly_limit,
+                    source
+                )
+                VALUES (?, ?, ?, 'manual_override')
+                ON CONFLICT(month, category_id)
+                DO UPDATE SET
+                    monthly_limit = excluded.monthly_limit,
+                    source = excluded.source
+                """,
+                (month, category_ids[name], amount),
+            )
+        )
+
+    statements.append(
+        (
+            """
+            INSERT INTO bot_settings (key, value)
+            VALUES (?, 'done')
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            (migration_key,),
+        )
+    )
+    await execute_many(statements)
+
+    print(
+        "NOVEMBER_CATEGORY_LIMITS_APPLIED:",
+        json.dumps(
+            {"month": month, "limits": limits, "total": sum(limits.values())},
+            ensure_ascii=False,
+        ),
+    )
+
+
 async def _dashboard(month):
     await ensure_rebalancing_tables()
+    if month == "2026-11":
+        await _apply_november_category_limits()
 
     # On the first day, rebalance as soon as the web dashboard is opened.
     # The scheduled trigger remains as a fallback if nobody opens the app.
