@@ -145,7 +145,7 @@ async def check_expense(
         "limit": limit,
         "spent": spent,
         "remaining": remaining_after,
-        "exceeded": remaining_after < 0,
+        "exceeded": limit > 0 and remaining_after < 0,
     }
 
 
@@ -234,7 +234,7 @@ async def save_expense(
         "limit": limit,
         "spent": spent,
         "remaining": remaining,
-        "exceeded": remaining < 0,
+        "exceeded": limit > 0 and remaining < 0,
     }
 
 
@@ -633,6 +633,7 @@ async def get_monthly_report(
                 "id": category_id,
                 "name": name,
                 "limit": limit,
+                "no_limit": name in {"Алкоголь", "Энергетики", "Курение"},
                 "allocated": allocated,
                 "spent": spent,
                 "remaining": max(limit - spent, 0),
