@@ -14,7 +14,11 @@ from app.allocation import allocate_income_remainder, get_monthly_budget_summary
 from app.budget import get_monthly_report
 from app.db import execute, execute_many, fetch_all, fetch_one, fetch_value, to_python
 from app.payment_flow import get_current_balance, get_moscow_today, record_actual_payment
-from app.rebalancing import ensure_rebalancing_tables, mark_stock_purchase
+from app.rebalancing import (
+    ensure_rebalancing_tables,
+    mark_stock_purchase,
+    rebalance_next_month,
+)
 from app.parser import classify_mandatory_payment
 
 
@@ -287,6 +291,35 @@ async def _move_coat_expense_to_clothing():
 
 async def _dashboard(month):
     await ensure_rebalancing_tables()
+
+    # On the first day, rebalance as soon as the web dashboard is opened.
+    # The scheduled trigger remains as a fallback if nobody opens the app.
+    today = get_moscow_today()
+    current_month = today.strftime("%Y-%m")
+    if today.day == 1 and month == current_month:
+        previous_month = (
+            today.replace(day=1) - __import__("datetime").timedelta(days=1)
+        ).strftime("%Y-%m")
+        try:
+            result = await rebalance_next_month(
+                source_month=previous_month,
+            )
+            if result.get("success"):
+                print(
+                    "WEB_MONTHLY_BUDGET_REBALANCE:",
+                    json.dumps(result, ensure_ascii=False),
+                )
+            else:
+                print(
+                    "WEB_MONTHLY_BUDGET_REBALANCE_FAILED:",
+                    json.dumps(result, ensure_ascii=False),
+                )
+        except Exception as error:
+            print(
+                "WEB_MONTHLY_BUDGET_REBALANCE_ERROR:",
+                repr(error),
+                traceback.format_exc(),
+            )
     await _remove_known_duplicate_utility_expense()
     await _move_coat_expense_to_clothing()
     report = await get_monthly_report(month)
