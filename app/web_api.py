@@ -203,12 +203,6 @@ async def _move_coat_expense_to_clothing():
         """
     )
 
-    if await fetch_value(
-        "SELECT value FROM bot_settings WHERE key = ?",
-        migration_key,
-    ) == "done":
-        return
-
     # Match the October expense by its current category and amount.
     # Keep its operation ID, date, amount and description unchanged.
     rows = await fetch_all(
@@ -438,16 +432,6 @@ async def _apply_november_category_limits():
             )
         )
 
-    statements.append(
-        (
-            """
-            INSERT INTO bot_settings (key, value)
-            VALUES (?, 'done')
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value
-            """,
-            (migration_key,),
-        )
-    )
     await execute_many(statements)
 
     print(
@@ -461,8 +445,6 @@ async def _apply_november_category_limits():
 
 async def _dashboard(month):
     await ensure_rebalancing_tables()
-    if month == "2026-11":
-        await _apply_november_category_limits()
 
     # On the first day, rebalance as soon as the web dashboard is opened.
     # The scheduled trigger remains as a fallback if nobody opens the app.
@@ -492,6 +474,10 @@ async def _dashboard(month):
                 repr(error),
                 traceback.format_exc(),
             )
+    if month == "2026-11":
+        # Re-apply after the automatic rebalance so these explicit limits win.
+        await _apply_november_category_limits()
+
     await _remove_known_duplicate_utility_expense()
     await _move_coat_expense_to_clothing()
     await _record_october_mortgage_payment()
