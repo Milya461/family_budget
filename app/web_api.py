@@ -5,7 +5,7 @@ import math
 import re
 import time
 import traceback
-from datetime import date
+from datetime import date, timedelta
 from urllib.parse import parse_qs, urlparse
 
 from workers import Response
@@ -298,7 +298,7 @@ async def _dashboard(month):
     current_month = today.strftime("%Y-%m")
     if today.day == 1 and month == current_month:
         previous_month = (
-            today.replace(day=1) - __import__("datetime").timedelta(days=1)
+            today.replace(day=1) - timedelta(days=1)
         ).strftime("%Y-%m")
         try:
             result = await rebalance_next_month(
