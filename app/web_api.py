@@ -845,7 +845,15 @@ async def handle_web_api(path, request, env):
             )
             if category_id is None:
                 raise ValueError("Категория не найдена.")
-            operation_date = get_moscow_today().isoformat()
+            raw_operation_date = str(body.get("operation_date") or "").strip()
+            try:
+                operation_date = (
+                    date.fromisoformat(raw_operation_date).isoformat()
+                    if raw_operation_date
+                    else get_moscow_today().isoformat()
+                )
+            except ValueError:
+                raise ValueError("Укажи корректную дату операции.")
             insert_result = await execute(
                 """
                 INSERT INTO operations (
@@ -876,8 +884,17 @@ async def handle_web_api(path, request, env):
             if amount <= 0:
                 raise ValueError("Сумма дохода должна быть больше нуля.")
 
+            raw_operation_date = str(body.get("operation_date") or "").strip()
+            try:
+                operation_date = (
+                    date.fromisoformat(raw_operation_date).isoformat()
+                    if raw_operation_date
+                    else get_moscow_today().isoformat()
+                )
+            except ValueError:
+                raise ValueError("Укажи корректную дату операции.")
+
             user_id = await _get_database_user_id()
-            operation_date = get_moscow_today().isoformat()
             insert_result = await execute(
                 """
                 INSERT INTO operations (
