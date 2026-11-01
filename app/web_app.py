@@ -498,8 +498,12 @@ function renderCategories(categories){
   if(!categories.length){$('categoryList').innerHTML='<div class="empty">Категории не найдены.</div>';return;}
   $('categoryList').innerHTML=categories.map(function(c){
     var limit=Number(c.limit||0),spent=Number(c.spent||0),allocated=Number(c.allocated||0);
+    var noLimit=Boolean(c.no_limit);
     var progress=limit>0?Math.min(100,spent/limit*100):0;
-    return '<article class="category clickable" role="button" tabindex="0" data-category-name="'+escapeHtml(c.name)+'"><div class="category-top"><div><div class="category-name">'+escapeHtml(c.name)+'</div><div class="category-open">Открыть расходы →</div></div><div class="category-amount">'+money(spent)+' / '+money(limit)+'</div></div><div class="category-meta"><span>Распределено: '+money(allocated)+'</span><span>Осталось по лимиту: '+money(Math.max(limit-spent,0))+'</span></div><div class="track"><span style="width:'+progress.toFixed(2)+'%"></span></div></article>';
+    var amountText=noLimit?money(spent)+' / Без лимита':money(spent)+' / '+money(limit);
+    var metaText=noLimit?'<span>Без распределения лимита</span><span>Лимит не установлен</span>':'<span>Распределено: '+money(allocated)+'</span><span>Осталось по лимиту: '+money(Math.max(limit-spent,0))+'</span>';
+    var track=noLimit?'':'<div class="track"><span style="width:'+progress.toFixed(2)+'%"></span></div>';
+    return '<article class="category clickable" role="button" tabindex="0" data-category-name="'+escapeHtml(c.name)+'"><div class="category-top"><div><div class="category-name">'+escapeHtml(c.name)+'</div><div class="category-open">Открыть расходы →</div></div><div class="category-amount">'+amountText+'</div></div><div class="category-meta">'+metaText+'</div>'+track+'</article>';
   }).join('');
   Array.prototype.forEach.call($('categoryList').querySelectorAll('[data-category-name]'),function(card){
     var open=function(){renderCategoryDetail(card.getAttribute('data-category-name'));};
