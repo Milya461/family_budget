@@ -712,9 +712,19 @@ async def get_monthly_report(
         - savings_remaining
     )
 
+    bad_habits_expenses = round(
+        sum(
+            float(category.get("spent") or 0)
+            for category in category_report
+            if category.get("name") in {"Алкоголь", "Курение", "Энергетики"}
+        ),
+        2,
+    )
+
     return {
         "month": month,
         "month_income": month_income,
+        "bad_habits_expenses": bad_habits_expenses,
         "month_expenses": month_expenses,
         "total_income": total_income,
         "total_expenses": total_expenses,
