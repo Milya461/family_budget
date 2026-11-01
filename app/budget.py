@@ -369,9 +369,11 @@ def summarize_month_expenses(rows):
             None if category_id is not None else row.get("debt_name"),
         )
 
-        # Explicitly identified required payments are excluded even if an old
-        # record was accidentally assigned to an ordinary category.
+        # Required payments and trial "harmful habits" categories are
+        # tracked separately from ordinary living expenses.
         if payment_kind is not None:
+            continue
+        if row.get("category_name") in {"Алкоголь", "Курение", "Энергетики"}:
             continue
 
         # A category assignment is authoritative for normal spending. Some
@@ -476,10 +478,12 @@ async def get_monthly_report(
         SELECT
             o.amount,
             o.category_id,
+            c.name AS category_name,
             o.debt_id,
             o.description,
             d.name AS debt_name
         FROM operations o
+        LEFT JOIN categories c ON c.id = o.category_id
         LEFT JOIN debts d ON d.id = o.debt_id
         WHERE o.operation_type = 'expense'
           AND substr(o.operation_date, 1, 7) = ?
