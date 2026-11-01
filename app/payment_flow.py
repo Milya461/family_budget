@@ -260,6 +260,7 @@ async def record_actual_payment(
     payment_id: int,
     actual_amount: float,
     telegram_id: int | None = None,
+    operation_date: str | None = None,
 ):
     """
     Записывает фактически оплаченный обязательный платёж.
@@ -282,6 +283,7 @@ async def record_actual_payment(
         payment_id=payment_id,
         actual_amount=actual_amount,
         telegram_id=telegram_id,
+        operation_date=operation_date,
     )
 
     if saved is None:
