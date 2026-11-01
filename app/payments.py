@@ -467,6 +467,7 @@ async def save_actual_payment(
     payment_id: int,
     actual_amount: float,
     telegram_id: int | None = None,
+    operation_date: str | None = None,
 ):
     """
     Подтверждает обязательный платёж и записывает расход.
@@ -527,7 +528,16 @@ async def save_actual_payment(
             "error": "Пользователь не найден.",
         }
 
-    operation_date = get_moscow_today().isoformat()
+    if operation_date is None:
+        operation_date = get_moscow_today().isoformat()
+    else:
+        try:
+            operation_date = date.fromisoformat(operation_date).isoformat()
+        except (TypeError, ValueError):
+            return {
+                "success": False,
+                "error": "Укажи корректную дату операции.",
+            }
 
     update_sql = """
         UPDATE mandatory_payments
