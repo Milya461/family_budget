@@ -50,6 +50,7 @@ async def get_monthly_category_budgets(
             "id": row["id"],
             "name": row["name"],
             "monthly_limit": float(row["monthly_limit"] or 0),
+            "no_limit": row["name"] in {"Алкоголь", "Энергетики", "Курение"},
         }
         for row in rows
     ]
@@ -189,6 +190,7 @@ async def calculate_remaining_monthly_budgets(
                 "id": category["id"],
                 "name": category["name"],
                 "monthly_limit": category["monthly_limit"],
+                "no_limit": category.get("no_limit", False),
                 "spent": spent,
                 "already_allocated": already_allocated,
                 "remaining": remaining_to_allocate,
