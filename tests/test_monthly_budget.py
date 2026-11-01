@@ -246,3 +246,20 @@ def test_monthly_spent_counts_categorized_ordinary_expense_even_if_debt_link_is_
 
     assert result["life_expenses"] == 2450
     assert result["other_expenses"] == 450
+
+
+def test_monthly_spent_keeps_harmful_habits_separate_from_living_expenses():
+    from app.budget import summarize_month_expenses
+
+    result = summarize_month_expenses([
+        {"amount": 35000, "description": "продукты", "category_id": 1, "category_name": "Продукты", "debt_id": None, "debt_name": None},
+        {"amount": 270, "description": "алкоголь", "category_id": 10, "category_name": "Алкоголь", "debt_id": None, "debt_name": None},
+        {"amount": 340, "description": "энергетик", "category_id": 11, "category_name": "Энергетики", "debt_id": None, "debt_name": None},
+        {"amount": 230, "description": "сигареты", "category_id": 12, "category_name": "Курение", "debt_id": None, "debt_name": None},
+        {"amount": 17300, "description": "Кредитная карта", "category_id": None, "category_name": None, "debt_id": 1, "debt_name": "Кредитная карта"},
+        {"amount": 15000, "description": "Кредит на машину", "category_id": None, "category_name": None, "debt_id": 2, "debt_name": "Кредит на машину"},
+        {"amount": 9400, "description": "Ипотека", "category_id": None, "category_name": None, "debt_id": 3, "debt_name": "Ипотека"},
+    ])
+
+    assert result["life_expenses"] == 35000
+    assert result["other_expenses"] == 0
