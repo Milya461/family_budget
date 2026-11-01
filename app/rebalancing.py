@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta, timezone
+
+NO_LIMIT_CATEGORIES = {"Алкоголь", "Энергетики", "Курение"}
 from app.db import (
     execute,
     execute_many,
@@ -141,6 +143,7 @@ async def get_category_limits_for_month(month: str):
                 "id": category_id,
                 "name": category["name"],
                 "monthly_limit": limit,
+                "no_limit": category["name"] in NO_LIMIT_CATEGORIES,
             }
         )
     return result
@@ -270,6 +273,8 @@ async def rebalance_next_month(
         }
     measured = []
     for category in categories:
+        if category.get("no_limit"):
+            continue
         spending = await get_category_spending_for_rebalance(
             category_id=category["id"],
             month=source_month,
