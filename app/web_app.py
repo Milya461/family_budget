@@ -81,6 +81,10 @@ label{display:block;margin:0 0 6px;font-size:10px;text-transform:uppercase;lette
 .stat .value{font-size:clamp(24px,3vw,39px);font-weight:800;letter-spacing:-.07em;margin:10px 0 3px;white-space:nowrap}
 .stat .note{font-size:10px;color:var(--muted)}
 .mandatory-summary{padding:18px 0 21px;border-bottom:1px solid var(--line)}
+.habit-summary{display:flex;justify-content:space-between;align-items:center;gap:18px;padding:17px 0 20px;border-bottom:1px solid var(--line)}
+.habit-summary h2{margin:0;font-size:15px;line-height:1.1;text-transform:uppercase;letter-spacing:-.04em}
+.habit-summary p{margin:5px 0 0;color:var(--muted);font-size:10px}
+.habit-summary strong{font-size:23px;letter-spacing:-.05em;white-space:nowrap}
 .mandatory-summary-head{display:flex;justify-content:space-between;align-items:end;gap:18px}
 .mandatory-summary h2{margin:0;font-size:15px;line-height:1.1;text-transform:uppercase;letter-spacing:-.04em}
 .mandatory-summary-head p{margin:5px 0 0;color:var(--muted);font-size:10px}
@@ -257,6 +261,13 @@ tbody tr:last-child td{border-bottom:0}
       <strong id="mandatoryTotal">—</strong>
     </div>
   </div>
+</section>
+<section class="habit-summary" aria-labelledby="habitSummaryTitle">
+  <div>
+    <h2 id="habitSummaryTitle">Вредные привычки</h2>
+    <p>Алкоголь · Энергетики · Курение</p>
+  </div>
+  <strong id="badHabitsTotal">—</strong>
 </section>
 <section class="balance-edit-panel" id="balanceEditPanel" aria-label="Редактирование реального остатка">
   <div class="line-card">
@@ -478,6 +489,7 @@ function render(data){
   $('spentTotal').textContent=money(r.life_expenses);
   $('spentNote').textContent='Лимит бюджета: '+money(r.life_budget);
   $('mandatoryTotal').textContent=money(r.mandatory_expenses);
+  $('badHabitsTotal').textContent=money(r.bad_habits_expenses||0);
   var pending=data.payments.filter(function(p){return p.status!=='paid';}).length;
   $('paymentsCount').textContent=String(pending);
   $('paymentsNote').textContent='Не оплачено · всего '+data.payments.length;
@@ -500,7 +512,7 @@ function renderCategories(categories){
     var limit=Number(c.limit||0),spent=Number(c.spent||0),allocated=Number(c.allocated||0);
     var noLimit=Boolean(c.no_limit);
     var progress=limit>0?Math.min(100,spent/limit*100):0;
-    var amountText=noLimit?money(spent)+' / Без лимита':money(spent)+' / '+money(limit);
+    var amountText=noLimit?money(spent)+' / —':money(spent)+' / '+money(limit);
     var metaText=noLimit?'<span>Без распределения лимита</span><span>Лимит не установлен</span>':'<span>Распределено: '+money(allocated)+'</span><span>Осталось по лимиту: '+money(Math.max(limit-spent,0))+'</span>';
     var track=noLimit?'':'<div class="track"><span style="width:'+progress.toFixed(2)+'%"></span></div>';
     return '<article class="category clickable" role="button" tabindex="0" data-category-name="'+escapeHtml(c.name)+'"><div class="category-top"><div><div class="category-name">'+escapeHtml(c.name)+'</div><div class="category-open">Открыть расходы →</div></div><div class="category-amount">'+amountText+'</div></div><div class="category-meta">'+metaText+'</div>'+track+'</article>';
