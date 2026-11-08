@@ -90,7 +90,7 @@ async def ensure_categories():
         """
         UPDATE categories
         SET is_active = 0
-        WHERE name IN (?, ?, ?)
+        WHERE name IN (?, ?)
         """,
         *DEPRECATED_CATEGORIES,
     )
