@@ -365,11 +365,12 @@ async def _record_october_mortgage_payment():
 async def _apply_november_category_limits():
     """Apply the user's explicit November 2026 category limits once."""
     month = "2026-11"
-    migration_key = "manual_category_limits_2026_11_v1"
+    migration_key = "manual_category_limits_2026_11_v2_home_2500"
     limits = {
         "Продукты": 35000,
         "Бензин": 15000,
         "Питомцы": 6000,
+        "Дом и быт": 2500,
         "Развлечения и кафе": 4000,
         "Здоровье": 3000,
         "Подарки и праздники": 500,
@@ -440,6 +441,103 @@ async def _apply_november_category_limits():
             {"month": month, "limits": limits, "total": sum(limits.values())},
             ensure_ascii=False,
         ),
+    )
+
+
+async def _move_686_expense_to_home():
+    """Move the single 686 RUB expense from Clothing to Home and household."""
+    migration_key = "reclassify_expense_686_to_home_2026_11_v1"
+
+    await execute(
+        """
+        CREATE TABLE IF NOT EXISTS bot_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """
+    )
+    if await fetch_value(
+        "SELECT value FROM bot_settings WHERE key = ?",
+        migration_key,
+    ) == "done":
+        return
+
+    rows = await fetch_all(
+        """
+        SELECT o.id, o.category_id, o.amount, o.operation_date, o.description
+        FROM operations o
+        JOIN categories c ON c.id = o.category_id
+        WHERE o.operation_type = 'expense'
+          AND ABS(o.amount - 686) < 0.005
+          AND c.name = 'Одежда'
+        ORDER BY o.id
+        """
+    )
+
+    # Move only an unambiguous match. If there are zero or several
+    # 686 RUB Clothing expenses, leave all operations unchanged.
+    if len(rows) != 1:
+        print(
+            "HOME_686_EXPENSE_RECLASSIFICATION_SKIPPED:",
+            {"matches": len(rows)},
+        )
+        return
+
+    home_category_id = await fetch_value(
+        "SELECT id FROM categories WHERE name = 'Дом и быт' AND is_active = 1"
+    )
+    if home_category_id is None:
+        print("HOME_686_EXPENSE_RECLASSIFICATION_SKIPPED: Home category missing")
+        return
+
+    operation = rows[0]
+    await execute(
+        """
+        UPDATE operations
+        SET category_id = ?
+        WHERE id = ?
+          AND category_id = ?
+          AND operation_type = 'expense'
+          AND ABS(amount - 686) < 0.005
+        """,
+        home_category_id,
+        operation["id"],
+        operation["category_id"],
+    )
+
+    updated = await fetch_one(
+        """
+        SELECT id
+        FROM operations
+        WHERE id = ?
+          AND category_id = ?
+          AND operation_type = 'expense'
+          AND ABS(amount - 686) < 0.005
+        """,
+        operation["id"],
+        home_category_id,
+    )
+    if not updated:
+        print("HOME_686_EXPENSE_RECLASSIFICATION_FAILED:", operation["id"])
+        return
+
+    await execute(
+        """
+        INSERT INTO bot_settings (key, value)
+        VALUES (?, 'done')
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """,
+        migration_key,
+    )
+    print(
+        "HOME_686_EXPENSE_RECLASSIFIED:",
+        {
+            "operation_id": operation["id"],
+            "amount": 686,
+            "date": operation.get("operation_date"),
+            "description": operation.get("description"),
+            "category": "Дом и быт",
+        },
     )
 
 
@@ -608,6 +706,8 @@ async def _dashboard(month):
         # Re-apply after the automatic rebalance so these explicit limits win.
         await _apply_november_category_limits()
         await _reclassify_november_trial_expenses()
+
+    await _move_686_expense_to_home()
 
     await _remove_known_duplicate_utility_expense()
     await _move_coat_expense_to_clothing()
