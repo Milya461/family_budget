@@ -5,6 +5,7 @@ CATEGORIES = {
     "Продукты": 25000,
     "Бензин": 7000,
     "Питомцы": 6000,
+    "Дом и быт": 2500,
     "Развлечения и кафе": 4000,
     "Транспорт": 2500,
     "Красота": 5000,
@@ -17,8 +18,8 @@ CATEGORIES = {
     "Курение": 0,
 }
 
-DEPRECATED_CATEGORIES = ("Личные покупки", "Непредвиденные", "Дом и быт")
-CATEGORY_SETUP_VERSION = "2026-11-category-groups-v4-no-limit-trial"
+DEPRECATED_CATEGORIES = ("Личные покупки", "Непредвиденные")
+CATEGORY_SETUP_VERSION = "2026-11-category-groups-v5-home-2500"
 SAVINGS_RESET_VERSION = "2026-10-26-reset-savings-on-request"
 
 
@@ -83,41 +84,6 @@ async def ensure_categories():
             """,
             name,
             limit,
-        )
-
-    # Дом и быт полностью переносим в Продукты:
-    # - исторические расходы сохраняются;
-    # - распределения сохраняются;
-    # - сумма расходов и распределений добавляется к Продуктам;
-    # - сама категория отключается и больше не показывается.
-    home_id = await fetch_value(
-        "SELECT id FROM categories WHERE name = ? LIMIT 1",
-        "Дом и быт",
-    )
-    products_id = await fetch_value(
-        "SELECT id FROM categories WHERE name = ? LIMIT 1",
-        "Продукты",
-    )
-
-    if home_id is not None and products_id is not None:
-        await execute(
-            """
-            UPDATE operations
-            SET category_id = ?
-            WHERE category_id = ?
-            """,
-            products_id,
-            home_id,
-        )
-
-        await execute(
-            """
-            UPDATE monthly_allocations
-            SET category_id = ?
-            WHERE category_id = ?
-            """,
-            products_id,
-            home_id,
         )
 
     await execute(
