@@ -14,6 +14,7 @@ from app.allocation import allocate_income_remainder, get_monthly_budget_summary
 from app.budget import get_monthly_report
 from app.db import execute, execute_many, fetch_all, fetch_one, fetch_value, to_python
 from app.payment_flow import get_current_balance, get_moscow_today, record_actual_payment
+from app.payments import ensure_month_mandatory_payments
 from app.rebalancing import (
     ensure_rebalancing_tables,
     mark_stock_purchase,
@@ -673,6 +674,11 @@ async def _reclassify_november_trial_expenses():
 
 async def _dashboard(month):
     await ensure_rebalancing_tables()
+
+    # Ensure planned payments exist for the current and future months in the web app.
+    # Historical months are left untouched when users browse the archive.
+    if month >= get_moscow_today().strftime("%Y-%m"):
+        await ensure_month_mandatory_payments(month)
 
     # On the first day, rebalance as soon as the web dashboard is opened.
     # The scheduled trigger remains as a fallback if nobody opens the app.
