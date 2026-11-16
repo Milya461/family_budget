@@ -684,7 +684,7 @@ $('resetSavingsButton').addEventListener('click',function(){
   button.disabled=true;
   fetch('/api/savings/reset',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
     .then(function(response){return response.json().then(function(data){if(!response.ok)throw new Error(data.error||'Не удалось обнулить копилку.');return data;});})
-    .then(function(){showToast('Копилка обнулена.');loadDashboard();})
+    .then(function(){showToast('Копилка обнулена.');reload();})
     .catch(function(error){showToast(error.message||'Не удалось обнулить копилку.');})
     .finally(function(){button.disabled=false;});
 });
