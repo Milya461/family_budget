@@ -637,7 +637,7 @@ async def get_monthly_report(
                 "id": category_id,
                 "name": name,
                 "limit": limit,
-                "no_limit": name in {"Алкоголь", "Энергетики", "Курение"},
+                "no_limit": name in {"Алкоголь", "Энергетики", "Курение", "Интернет"},
                 "allocated": allocated,
                 "spent": spent,
                 "remaining": max(limit - spent, 0),
