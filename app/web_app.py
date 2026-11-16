@@ -332,6 +332,10 @@ tbody tr:last-child td{border-bottom:0}
         <div class="form-field wide"><label for="savingsInput">Сколько отложить, ₽</label><input id="savingsInput" type="number" min="0.01" step="0.01" placeholder="Например, 5000" required></div>
         <div class="form-field wide"><button class="button primary" type="submit">Пополнить копилку +</button></div>
       </form>
+      <div class="form-field wide" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
+        <button class="button" id="resetSavingsButton" type="button">Обнулить копилку</button>
+        <p class="sub" style="margin:8px 0 0">Баланс станет 0 ₽. История пополнений сохранится, сумма вернётся в реальные деньги основного счёта.</p>
+      </div>
     </div>
 </section>
 </section>
@@ -672,6 +676,17 @@ $('savingsForm').addEventListener('submit',function(event){
   event.preventDefault();
   if(!pendingSavingsRequestId)pendingSavingsRequestId=window.crypto&&window.crypto.randomUUID?window.crypto.randomUUID():('req_'+Date.now()+'_'+Math.random().toString(36).slice(2));
   submitForm(event.currentTarget,'/api/savings',function(){return {amount:$('savingsInput').value,request_id:pendingSavingsRequestId};},'Пополнение копилки подтверждено.',function(){pendingSavingsRequestId='';});
+});
+$('resetSavingsButton').addEventListener('click',function(){
+  var current=Number(($('savingsAmountLarge').textContent||'').replace(/[^0-9,.-]/g,'').replace(',','.'))||0;
+  if(!window.confirm('Обнулить копилку? Текущий остаток '+money(current)+' вернётся в реальные деньги. История пополнений сохранится.'))return;
+  var button=this;
+  button.disabled=true;
+  fetch('/api/savings/reset',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+    .then(function(response){return response.json().then(function(data){if(!response.ok)throw new Error(data.error||'Не удалось обнулить копилку.');return data;});})
+    .then(function(){showToast('Копилка обнулена.');loadDashboard();})
+    .catch(function(error){showToast(error.message||'Не удалось обнулить копилку.');})
+    .finally(function(){button.disabled=false;});
 });
 $('balanceEditButton').addEventListener('click',function(){
   var panel=$('balanceEditPanel');
