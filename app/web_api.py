@@ -800,6 +800,96 @@ async def _move_3000_subscriptions_expense_to_ozon(month: str):
         )
 
 
+async def _move_november_fine_to_category():
+    """Move the exact fine expense from 2026-11-10 into the Fines category once."""
+    migration_key = "reclassify_fine_1142_2026_11_10_v1"
+    await execute(
+        """
+        CREATE TABLE IF NOT EXISTS bot_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """
+    )
+    if await fetch_value(
+        "SELECT value FROM bot_settings WHERE key = ?",
+        migration_key,
+    ) == "done":
+        return
+
+    category_id = await fetch_value(
+        "SELECT id FROM categories WHERE name = 'Штрафы' AND is_active = 1"
+    )
+    if category_id is None:
+        print("FINE_RECLASSIFICATION_SKIPPED: fines category missing")
+        return
+
+    rows = await fetch_all(
+        """
+        SELECT id, category_id, amount, description, operation_date
+        FROM operations
+        WHERE operation_type = 'expense'
+          AND ABS(amount - 1142) < 0.005
+          AND operation_date = '2026-11-10'
+          AND (
+              COALESCE(description, '') LIKE '%Штраф%'
+              OR COALESCE(description, '') LIKE '%штраф%'
+              OR COALESCE(description, '') LIKE '%ШТРАФ%'
+          )
+        ORDER BY id
+        """
+    )
+    if len(rows) != 1:
+        print(
+            "FINE_RECLASSIFICATION_SKIPPED:",
+            {"matching_expenses": len(rows)},
+        )
+        return
+
+    operation = rows[0]
+    await execute(
+        """
+        UPDATE operations
+        SET category_id = ?
+        WHERE id = ?
+          AND operation_type = 'expense'
+          AND ABS(amount - 1142) < 0.005
+          AND operation_date = '2026-11-10'
+        """,
+        category_id,
+        operation["id"],
+    )
+    updated = await fetch_one(
+        """
+        SELECT id
+        FROM operations
+        WHERE id = ?
+          AND category_id = ?
+          AND operation_type = 'expense'
+          AND ABS(amount - 1142) < 0.005
+          AND operation_date = '2026-11-10'
+        """,
+        operation["id"],
+        category_id,
+    )
+    if not updated:
+        print("FINE_RECLASSIFICATION_FAILED:", operation["id"])
+        return
+
+    await execute(
+        """
+        INSERT INTO bot_settings (key, value)
+        VALUES (?, 'done')
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """,
+        migration_key,
+    )
+    print(
+        "FINE_RECLASSIFIED:",
+        {"operation_id": operation["id"], "amount": 1142, "date": "2026-11-10"},
+    )
+
+
 async def _dashboard(month):
     await ensure_rebalancing_tables()
 
@@ -845,6 +935,7 @@ async def _dashboard(month):
         await _reclassify_november_trial_expenses()
 
     await _move_686_expense_to_home()
+    await _move_november_fine_to_category()
 
     await _remove_known_duplicate_utility_expense()
     await _move_coat_expense_to_clothing()
