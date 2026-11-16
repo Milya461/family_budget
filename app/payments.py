@@ -17,6 +17,7 @@ MOSCOW_TIMEZONE = timezone(timedelta(hours=3))
 PAYMENT_PLANS = {
     10: [
         ("Кредитная карта", 18000),
+        ("Кредитка Озон", 3000),
         ("Кредит на машину", 15000),
     ],
     25: [
@@ -121,6 +122,23 @@ async def create_mandatory_payment(
             """,
             payment_name,
         )
+
+        # Keep the new Ozon card linked to a debt even on databases
+        # where the original setup() function has already run.
+        if debt_id is None and payment_name == "Кредитка Озон":
+            await execute(
+                """
+                INSERT OR IGNORE INTO debts (
+                    name, planned_amount, is_active
+                ) VALUES (?, ?, 1)
+                """,
+                payment_name,
+                planned_amount,
+            )
+            debt_id = await fetch_value(
+                "SELECT id FROM debts WHERE name = ?",
+                payment_name,
+            )
 
     if debt_id is None:
         result = await execute(
