@@ -50,7 +50,7 @@ async def get_monthly_category_budgets(
             "id": row["id"],
             "name": row["name"],
             "monthly_limit": float(row["monthly_limit"] or 0),
-            "no_limit": row["name"] in {"Алкоголь", "Энергетики", "Курение"},
+            "no_limit": row["name"] in {"Алкоголь", "Энергетики", "Курение", "Интернет"},
         }
         for row in rows
     ]
