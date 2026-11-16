@@ -342,12 +342,11 @@ tbody tr:last-child td{border-bottom:0}
 </section>
 <section class="action-layout operation-forms">
   <article class="action-card">
-    <div class="action-number">01</div><h3>Добавить расход</h3><p>Категория, сумма и описание траты.</p>
+    <div class="action-number">01</div><h3>Добавить расход</h3><p>Выбери категорию и укажи сумму траты.</p>
     <form id="expenseForm" class="form-grid">
       <div class="form-field wide"><label for="expenseAmount">Сумма, ₽</label><input id="expenseAmount" type="number" step="0.01" min="0.01" placeholder="599" required></div>
       <div class="form-field wide"><label for="expenseDate">Дата расхода</label><input id="expenseDate" type="date" required></div>
       <div class="form-field wide"><label for="expenseCategory">Категория</label><select id="expenseCategory" required><option value="">Загрузка…</option></select></div>
-      <div class="form-field wide"><label for="expenseDescription">Описание</label><input id="expenseDescription" maxlength="200" placeholder="Продукты, корм котам…"></div>
       <div class="form-field wide"><button class="button primary" type="submit">Записать расход</button></div>
     </form>
   </article>
@@ -666,7 +665,7 @@ Array.prototype.forEach.call(document.querySelectorAll('[data-view-target]'),fun
 });
 $('monthPicker').addEventListener('change',async function(){try{setBusy(true);await reload($('monthPicker').value);}catch(error){showToast(error.message);}finally{setBusy(false);}});
 $('categoryDetailClose').addEventListener('click',function(){renderCategoryDetail('');window.scrollTo({top:0,behavior:'smooth'});});
-$('expenseForm').addEventListener('submit',function(event){event.preventDefault();submitForm(event.currentTarget,'/api/expense',function(){return {amount:$('expenseAmount').value,category:$('expenseCategory').value,description:$('expenseDescription').value,operation_date:$('expenseDate').value};},'Расход записан.');});
+$('expenseForm').addEventListener('submit',function(event){event.preventDefault();submitForm(event.currentTarget,'/api/expense',function(){return {amount:$('expenseAmount').value,category:$('expenseCategory').value,operation_date:$('expenseDate').value};},'Расход записан.');});
 $('incomeForm').addEventListener('submit',function(event){event.preventDefault();submitForm(event.currentTarget,'/api/income',function(){return {amount:$('incomeAmount').value,description:$('incomeDescription').value,operation_date:$('incomeDate').value};},'Доход записан.');});
 var pendingSavingsRequestId='';
 $('savingsForm').addEventListener('submit',function(event){
