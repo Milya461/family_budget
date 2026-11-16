@@ -1468,6 +1468,25 @@ async def handle_web_api(path, request, env):
                 "balance": await get_current_balance(),
             })
 
+        if path == "/api/savings/reset" and method == "POST":
+            current_savings = float(await fetch_value(
+                "SELECT balance FROM savings WHERE id = 1"
+            ) or 0)
+            await execute(
+                "UPDATE savings SET balance = 0 WHERE id = 1"
+            )
+            verified_savings = float(await fetch_value(
+                "SELECT balance FROM savings WHERE id = 1"
+            ) or 0)
+            if abs(verified_savings) >= 0.005:
+                raise RuntimeError("Не удалось подтвердить обнуление копилки.")
+            return _json({
+                "success": True,
+                "previous_savings": round(current_savings, 2),
+                "savings_balance": 0,
+                "balance": await get_current_balance(),
+            })
+
         if path == "/api/savings" and method == "POST":
             body = await request.json()
             result = await _add_manual_savings(body)
