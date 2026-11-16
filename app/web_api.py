@@ -672,6 +672,134 @@ async def _reclassify_november_trial_expenses():
     )
 
 
+async def _move_3000_subscriptions_expense_to_ozon(month: str):
+    """Reclassify one exact 3000 RUB subscription expense as the Ozon card payment."""
+    rows = await fetch_all(
+        """
+        SELECT o.id, o.category_id
+        FROM operations o
+        JOIN categories c ON c.id = o.category_id
+        WHERE o.operation_type = 'expense'
+          AND c.name = 'Подписки'
+          AND ABS(o.amount - 3000) < 0.005
+          AND substr(o.operation_date, 1, 7) = ?
+        ORDER BY o.id
+        """,
+        month,
+    )
+
+    # Never guess if there is no exact match or more than one candidate.
+    if len(rows) != 1:
+        if rows:
+            print(
+                "OZON_3000_EXPENSE_MOVE_SKIPPED:",
+                {"month": month, "matching_expenses": len(rows)},
+            )
+        return
+
+    payment_rows = await fetch_all(
+        """
+        SELECT mp.id, mp.status, mp.actual_amount, mp.debt_id
+        FROM mandatory_payments mp
+        JOIN salary_events se ON se.id = mp.salary_event_id
+        WHERE mp.payment_name = 'Кредитка Озон'
+          AND se.planned_day = 10
+          AND substr(se.event_date, 1, 7) = ?
+        ORDER BY mp.id
+        """,
+        month,
+    )
+    if len(payment_rows) != 1:
+        print(
+            "OZON_3000_EXPENSE_MOVE_SKIPPED:",
+            {"month": month, "matching_ozon_payments": len(payment_rows)},
+        )
+        return
+
+    payment = payment_rows[0]
+    if (
+        payment.get("status") == "paid"
+        and abs(float(payment.get("actual_amount") or 0) - 3000) >= 0.005
+    ):
+        print(
+            "OZON_3000_EXPENSE_MOVE_SKIPPED: Ozon payment already has another paid amount",
+            {"month": month, "payment_id": payment["id"]},
+        )
+        return
+
+    debt_id = await fetch_value(
+        "SELECT id FROM debts WHERE name = 'Кредитка Озон' AND is_active = 1"
+    )
+    if debt_id is None:
+        print("OZON_3000_EXPENSE_MOVE_SKIPPED: Ozon debt record not found")
+        return
+
+    operation = rows[0]
+    await execute_many([
+        (
+            """
+            UPDATE operations
+            SET category_id = NULL,
+                debt_id = ?,
+                description = 'Кредитка Озон'
+            WHERE id = ?
+              AND category_id = ?
+              AND operation_type = 'expense'
+              AND ABS(amount - 3000) < 0.005
+            """,
+            (debt_id, operation["id"], operation["category_id"]),
+        ),
+        (
+            """
+            UPDATE mandatory_payments
+            SET actual_amount = 3000,
+                status = 'paid'
+            WHERE id = ?
+              AND (
+                  status != 'paid'
+                  OR ABS(COALESCE(actual_amount, 0) - 3000) < 0.005
+              )
+            """,
+            (payment["id"],),
+        ),
+    ])
+
+    moved = await fetch_one(
+        """
+        SELECT id
+        FROM operations
+        WHERE id = ?
+          AND category_id IS NULL
+          AND debt_id = ?
+          AND operation_type = 'expense'
+          AND description = 'Кредитка Озон'
+          AND ABS(amount - 3000) < 0.005
+        """,
+        operation["id"],
+        debt_id,
+    )
+    paid = await fetch_one(
+        """
+        SELECT id
+        FROM mandatory_payments
+        WHERE id = ?
+          AND status = 'paid'
+          AND ABS(actual_amount - 3000) < 0.005
+        """,
+        payment["id"],
+    )
+    if moved and paid:
+        print(
+            "OZON_3000_EXPENSE_MOVED:",
+            {"month": month, "operation_id": operation["id"], "payment_id": payment["id"]},
+        )
+    else:
+        print(
+            "OZON_3000_EXPENSE_MOVE_VERIFICATION_FAILED:",
+            {"month": month, "operation_id": operation["id"], "payment_id": payment["id"]},
+        )
+
+
 async def _dashboard(month):
     await ensure_rebalancing_tables()
 
@@ -679,6 +807,9 @@ async def _dashboard(month):
     # Historical months are left untouched when users browse the archive.
     if month >= get_moscow_today().strftime("%Y-%m"):
         await ensure_month_mandatory_payments(month)
+
+    if month == "2026-11":
+        await _move_3000_subscriptions_expense_to_ozon(month)
 
     # On the first day, rebalance as soon as the web dashboard is opened.
     # The scheduled trigger remains as a fallback if nobody opens the app.
