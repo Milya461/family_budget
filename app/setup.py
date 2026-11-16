@@ -11,6 +11,7 @@ CATEGORIES = {
     "Красота": 5000,
     "Одежда": 4000,
     "Подписки": 500,
+    "Интернет": 0,
     "Здоровье": 3000,
     "Подарки и праздники": 2000,
     "Алкоголь": 0,
@@ -19,7 +20,7 @@ CATEGORIES = {
 }
 
 DEPRECATED_CATEGORIES = ("Личные покупки", "Непредвиденные")
-CATEGORY_SETUP_VERSION = "2026-11-category-groups-v5-home-2500"
+CATEGORY_SETUP_VERSION = "2026-11-category-groups-v6-internet-ozon"
 SAVINGS_RESET_VERSION = "2026-10-26-reset-savings-on-request"
 
 
@@ -173,6 +174,7 @@ async def ensure_categories():
 
 
 DEBTS = {
+    "Кредитка Озон": 3000,
     "Кредитная карта": 18000,
     "Кредит на машину": 30000,
     "Ипотека": 9000,
