@@ -512,7 +512,7 @@ function renderCategories(categories){
     var noLimit=Boolean(c.no_limit);
     var progress=limit>0?Math.min(100,spent/limit*100):0;
     var amountText=noLimit?money(spent)+' / —':money(spent)+' / '+money(limit);
-    var metaText=noLimit?'<span>Без распределения лимита</span><span>Лимит не установлен</span>':'<span>Распределено: '+money(allocated)+'</span><span>Осталось по лимиту: '+money(Math.max(limit-spent,0))+'</span>';
+    var metaText='';
     var track=noLimit?'':'<div class="track"><span style="width:'+progress.toFixed(2)+'%"></span></div>';
     return '<article class="category clickable" role="button" tabindex="0" data-category-name="'+escapeHtml(c.name)+'"><div class="category-top"><div><div class="category-name">'+escapeHtml(c.name)+'</div><div class="category-open">Открыть расходы →</div></div><div class="category-amount">'+amountText+'</div></div><div class="category-meta">'+metaText+'</div>'+track+'</article>';
   }).join('');
