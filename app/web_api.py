@@ -1042,6 +1042,7 @@ async def _cancel_operation(operation_id):
     else:
         # A confirmed mandatory payment is also a paid-status record.
         payment_names = {
+            "Кредитка Озон",
             "Кредитная карта",
             "Кредит на машину",
             "Ипотека",
