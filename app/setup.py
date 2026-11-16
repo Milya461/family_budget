@@ -12,6 +12,7 @@ CATEGORIES = {
     "Одежда": 4000,
     "Подписки": 500,
     "Интернет": 0,
+    "Штрафы": 0,
     "Здоровье": 3000,
     "Подарки и праздники": 2000,
     "Алкоголь": 0,
@@ -20,7 +21,7 @@ CATEGORIES = {
 }
 
 DEPRECATED_CATEGORIES = ("Личные покупки", "Непредвиденные")
-CATEGORY_SETUP_VERSION = "2026-11-category-groups-v6-internet-ozon"
+CATEGORY_SETUP_VERSION = "2026-11-category-groups-v7-fines"
 SAVINGS_RESET_VERSION = "2026-10-26-reset-savings-on-request"
 
 
