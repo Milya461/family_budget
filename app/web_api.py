@@ -1453,7 +1453,7 @@ async def handle_web_api(path, request, env):
             subscription = body.get("subscription") or {}
             await save_push_subscription(
                 subscription,
-                user_agent=request.headers.get("User-Agent", ""),
+                user_agent=request.headers.get("User-Agent") or "",
             )
             return _json({"success": True})
 
