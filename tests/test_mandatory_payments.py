@@ -9,6 +9,7 @@ async def test_get_planned_payments_for_10th():
 
     assert result == [
         ("Кредитная карта", 18000),
+        ("Кредитка Озон", 3000),
         ("Кредит на машину", 15000),
     ]
 
