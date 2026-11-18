@@ -40,30 +40,50 @@ async def ensure_reminder_tables():
 
 async def daily_activity_check(bot):
     """
-    В 21:00 по расписанию проверяет весь текущий день по Москве.
-    Напоминает внести и доходы, и расходы, только если за день
-    не было записано ни одной операции.
+    В 21:00 по Москве проверяет доходы и расходы за текущий день.
+    Напоминает отдельно о каждом типе операций, которого не хватает.
     """
     await ensure_reminder_tables()
 
     today_str = get_moscow_today().isoformat()
-
     activity = await fetch_one(
         """
-        SELECT id
+        SELECT
+            SUM(CASE WHEN operation_type = 'expense' THEN 1 ELSE 0 END)
+                AS expense_count,
+            SUM(CASE WHEN operation_type = 'income' THEN 1 ELSE 0 END)
+                AS income_count
         FROM operations
         WHERE operation_type IN ('income', 'expense')
           AND operation_date = ?
-        LIMIT 1
         """,
         today_str,
     )
 
-    if activity:
+    expense_count = int((activity or {}).get("expense_count") or 0)
+    income_count = int((activity or {}).get("income_count") or 0)
+
+    missing = []
+    if expense_count == 0:
+        missing.append("расходы")
+    if income_count == 0:
+        missing.append("доходы")
+
+    print(
+        "DAILY_ACTIVITY_CHECK_COUNTS:",
+        {
+            "date": today_str,
+            "expense_count": expense_count,
+            "income_count": income_count,
+            "missing": missing,
+        },
+    )
+
+    if not missing:
+        print("DAILY_ACTIVITY_REMINDER_SKIPPED: both operation types recorded")
         return
 
-    # Не отправляем повторное напоминание за этот день,
-    # если оно уже было отправлено ранее.
+    # Не отправляем повторное напоминание за этот день.
     previous_check = await fetch_one(
         """
         SELECT check_date
@@ -75,16 +95,18 @@ async def daily_activity_check(bot):
     )
 
     if previous_check:
+        print("DAILY_ACTIVITY_REMINDER_SKIPPED: already handled", today_str)
         return
 
     users = await get_users()
-
     if not users:
+        print("DAILY_ACTIVITY_REMINDER_SKIPPED: no Telegram users in database")
         return
 
+    missing_text = " и ".join(missing)
     message = (
         "⏰ Напоминание о семейном бюджете\n\n"
-        "За сегодня пока не записано ни одного дохода или расхода.\n\n"
+        f"За сегодня пока не записаны: {missing_text}.\n\n"
         "Если сегодня были поступления или траты — внеси их в бюджет.\n"
         "Например: «продукты 599» или «зарплата 50000»."
     )
@@ -93,7 +115,7 @@ async def daily_activity_check(bot):
         "inline_keyboard": [
             [
                 {
-                    "text": "✅ Сегодня без операций",
+                    "text": "✅ Сегодня больше нечего записывать",
                     "callback_data": "daily_expenses:none",
                 }
             ],
@@ -115,10 +137,13 @@ async def daily_activity_check(bot):
                 message,
                 keyboard,
             )
-
-            if result and result.get("ok", True):
+            is_ok = bool(result and result.get("ok", False))
+            print(
+                "DAILY_ACTIVITY_REMINDER_DELIVERY:",
+                {"telegram_id": telegram_id, "ok": is_ok, "result": result},
+            )
+            if is_ok:
                 sent_to_anyone = True
-
         except Exception as error:
             print(
                 "DAILY_ACTIVITY_REMINDER_ERROR:",
@@ -137,3 +162,6 @@ async def daily_activity_check(bot):
             """,
             today_str,
         )
+        print("DAILY_ACTIVITY_REMINDER_SENT:", today_str)
+    else:
+        print("DAILY_ACTIVITY_REMINDER_NOT_SENT: no Telegram delivery succeeded")
