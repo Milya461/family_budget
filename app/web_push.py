@@ -9,7 +9,7 @@ from app.payment_flow import get_moscow_today
 
 # A P-256 VAPID public key. The matching private JWK is stored only as a
 # Cloudflare Worker secret named WEB_PUSH_PRIVATE_JWK.
-WEB_PUSH_PUBLIC_KEY = "BIeK6RIWp8ONqX6MKuLbMnE-3tQOaAMcG4QM-DfflTWcayTkuIqNrIyCQWqy8XIj-qMSSpnq_2Ci90gFPq6pRaY"
+WEB_PUSH_PUBLIC_KEY = "BLVLglcbTKsA4T8XrGmh5xO0Nsto2x5CRsqudsFWca8aTFMWKurDM9ibo9CLVw2zJ-1yh9_uTnyy2PXTwiCuuCQ"
 VAPID_SUBJECT = "https://github.com/Milya461/family_budget"
 
 
