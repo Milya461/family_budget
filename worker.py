@@ -1760,6 +1760,10 @@ class Default(WorkerEntrypoint):
         return Response("Family Budget bot is running.")
 
     async def scheduled(self, controller, env, ctx):
+        print(
+            "CRON_EVENT_RECEIVED:",
+            {"cron": getattr(controller, "cron", None)},
+        )
         configure_d1(env.DB)
         await ensure_runtime_tables()
         await ensure_categories()
@@ -1797,7 +1801,18 @@ class Default(WorkerEntrypoint):
         token = getattr(env, "BOT_TOKEN", None)
 
         if not token:
+            print("DAILY_ACTIVITY_REMINDER_SKIPPED: BOT_TOKEN is missing")
             return
 
         bot = TelegramBot(token)
-        await daily_activity_check(bot)
+        print("CRON_DAILY_ACTIVITY_STARTED:", today.isoformat())
+        try:
+            await daily_activity_check(bot)
+        except Exception as error:
+            print(
+                "CRON_DAILY_ACTIVITY_FAILED:",
+                repr(error),
+                traceback.format_exc(),
+            )
+            raise
+        print("CRON_DAILY_ACTIVITY_FINISHED:", today.isoformat())
