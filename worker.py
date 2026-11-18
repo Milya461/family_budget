@@ -1,4 +1,5 @@
 
+import base64
 import json
 import re
 import traceback
@@ -1660,9 +1661,15 @@ PWA_MANIFEST = json.dumps({
             "type": "image/svg+xml",
             "purpose": "any maskable",
         }
+        {
+            "src": "/apple-touch-icon.png",
+            "sizes": "180x180",
+            "type": "image/png",
+        }
     ],
 }, ensure_ascii=False)
 
+APP_ICON_PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAADvUlEQVR42u3dzXETQRRFYTzlFFzasCABViYPNgRAaA7AG+eBVyTAgkBYUOVS6c/WTL9+/VrfKXYgNJ45vu/2qCXd7XYPn4BTLE4ByAFygBwgB8gBcoAcIAfIAXIA5AA5QA4Ecp/43E8vzy7AR/j5/UfK89513s9BiEKidJKDExUtCZeDFnUVCZTjXS2yRmk5ss5klBznfh5CFDqxIXKc/AFoUe4MN5aDFjMp0lKO42OlRYoirU77woz5FiytVogLM/gROFYOjoMW44yYjddiiVYYuRGSKYcboOWWM53kMFDGD48tfizM4Eds52DGlOVjpRyqxi2Uj2UQSTFgeCzdNES58FjS9cSw4WH3OdrJsZ9OYqNWeFw7WSQHyAFyIE0OheOmaofkADlADpAD5AA5QA6QA+QAOUAO4Ij73Kd/ff117UMeH79d+5Dq+xqzXsaSHCAHSoyVFaPk3MNXjJiKZO2UkBwgB8gBcmDSQnqOC+1yY4etuN11hHszkgPkADlADpADViuWCZID5AA5oHOoGuTAwNgmCJ0DxopIlxwgB8gBkAPkgNVKKB3unA67IJIcIAeMleqTa6gRQ47Dq+LlWWMF5AA5oHN0LR/dSqjkgLECcoAcIAdgtTLNOkJygBwgB3QOVYMcaIdtgtA5YKzIfMkBYwWYb6xs/MD8fX7//RP9FPscfwvAybV07lDTOZK5fH/l7W9TLDFWxjVj3b+UHDekxcFDfAHgiQn9/88cZpzrN6NFiLFSyYzOfpAD5JglNnqGR7FCGlc7zp3uhs/Y9oo+vTxHl1PJAXKAHMMS0RKimwc5QA6UXq0Evf65cZHZ6qhaLWIlB8gBcoAcuMTXz1+a/5/Rd0gTCun+DencEhp98SQHyIHBwqnDlrDk+xzTbO76OE3ueffZLCg5QI5h2P5L322PMTmK+dFz97m3JmT6cVX/6P++JslRI0JS3vEmOUbxw3tlMVY2GCsgB8gBcqCaHPulyae6VmH199ZKDpAD5ECmHGrHjRQOyYFIOYRHldjoJMctfxx4XVZctSVdT4wZG+vlEB7Tx0azQio85ouNTXIcyMiPYc1YHfObkoMfE5vRYKwoH/NVjcadQ3jMVDXeuNvtHiKOSaKka7H9ErRJjuPjECHVzWg5VvgxmRnNxsplIYyYng2j4dluLAdF5tAiUI4LM4UihU5slBwf6RxEGfxMBsqhlnYg9BcsXA6KVNSiqxwsKeREmhxEGVyIUeTA4Nh9DnKAHCAHyAFygBwgB8gBcoAcADlADjTgH0WUVs3DdfVmAAAAAElFTkSuQmCC")
 APP_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
 <rect width="512" height="512" rx="112" fill="#171715"/>
 <path d="M118 352V160h44v150h188v42H118Z" fill="#e4e4e1"/>
@@ -1689,8 +1696,8 @@ self.addEventListener("push", (event) => {
   const title = data.title || "Семейный бюджет";
   const options = {
     body: data.body || "Проверь, все ли доходы и расходы за сегодня записаны.",
-    icon: "/icon.svg",
-    badge: "/icon.svg",
+    icon: "/apple-touch-icon.png",
+    badge: "/apple-touch-icon.png",
     tag: data.tag || "family-budget-reminder",
     renotify: true,
     data: { url: data.url || "/" }
@@ -1749,6 +1756,17 @@ class Default(WorkerEntrypoint):
                 headers={
                     "Content-Type": "application/manifest+json; charset=utf-8",
                     "Cache-Control": "public, max-age=3600",
+                    "X-Content-Type-Options": "nosniff",
+                },
+            )
+
+        if url.path == "/apple-touch-icon.png":
+            return Response(
+                APP_ICON_PNG,
+                status=200,
+                headers={
+                    "Content-Type": "image/png",
+                    "Cache-Control": "public, max-age=86400",
                     "X-Content-Type-Options": "nosniff",
                 },
             )
