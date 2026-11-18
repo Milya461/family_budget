@@ -582,12 +582,15 @@ function renderOperations(operations){
   $('operationTable').innerHTML=operations.map(function(o){
     var isIncome=o.operation_type==='income';
     var type=isIncome?'Доход':'Расход';
+    var operationDate=String(o.operation_date||'');
+    var dateParts=operationDate.split('-');
+    var dateText=dateParts.length===3?dateParts[2]+'.'+dateParts[1]+'.'+dateParts[0]:operationDate;
     var name=o.description||o.debt_name||type;
     var group=o.category_name||o.debt_name||'—';
     var isPetFood=!isIncome&&o.category_name==='Питомцы'&&/корм|грандорф|grandorf|jarvi|джарви/i.test(name);
     var stockButton=isPetFood?'<button class="button" type="button" data-stock-id="'+Number(o.id)+'" data-stock-months="'+Number(o.stock_months||0)+'">'+(o.stock_months?'Запас: '+Number(o.stock_months)+' мес.':'Отметить запас')+'</button>':'';
     var cancelButton='<button class="button operation-cancel" type="button" data-cancel-operation="'+Number(o.id)+'" data-cancel-kind="'+(isIncome?'income':'expense')+'" data-cancel-title="'+escapeHtml(name)+'" data-cancel-amount="'+Number(o.amount||0)+'">Отменить</button>';
-    return '<tr><td>'+escapeHtml(o.operation_date)+'</td><td><span class="type">'+type+'</span></td><td>'+escapeHtml(name)+(stockButton?'<div style="margin-top:8px">'+stockButton+'</div>':'')+'</td><td>'+escapeHtml(group)+'</td><td class="right '+(isIncome?'positive':'negative')+'">'+(isIncome?'+':'−')+money(o.amount)+'</td><td>'+cancelButton+'</td></tr>';
+    return '<tr><td>'+escapeHtml(dateText)+'</td><td><span class="type">'+type+'</span></td><td>'+escapeHtml(name)+(stockButton?'<div style="margin-top:8px">'+stockButton+'</div>':'')+'</td><td>'+escapeHtml(group)+'</td><td class="right '+(isIncome?'positive':'negative')+'">'+(isIncome?'+':'−')+money(o.amount)+'</td><td>'+cancelButton+'</td></tr>';
   }).join('');
   Array.prototype.forEach.call($('operationTable').querySelectorAll('[data-cancel-operation]'),function(button){
     button.addEventListener('click',async function(){
