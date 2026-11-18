@@ -37,7 +37,7 @@ from app.rebalancing import (
     mark_stock_purchase,
     rebalance_next_month,
 )
-from app.scheduler import daily_activity_check
+from app.web_push import ensure_web_push_tables, send_daily_web_push
 from app.daily_reminders import handle_daily_expenses_callback
 from app.parser import parse_operation, extract_amount
 from app.setup import ensure_categories
@@ -1643,6 +1643,85 @@ async def process_update(bot, update):
         await process_message(bot, update["message"])
 
 
+PWA_MANIFEST = json.dumps({
+    "id": "/",
+    "name": "Семейный бюджет",
+    "short_name": "Бюджет",
+    "description": "Семейный финансовый кабинет",
+    "start_url": "/",
+    "scope": "/",
+    "display": "standalone",
+    "background_color": "#e4e4e1",
+    "theme_color": "#e4e4e1",
+    "icons": [
+        {
+            "src": "/icon.svg",
+            "sizes": "any",
+            "type": "image/svg+xml",
+            "purpose": "any maskable",
+        }
+    ],
+}, ensure_ascii=False)
+
+APP_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<rect width="512" height="512" rx="112" fill="#171715"/>
+<path d="M118 352V160h44v150h188v42H118Z" fill="#e4e4e1"/>
+<path d="M206 160h188v42H250v40h112v42H250v68h-44V160Z" fill="#b7c8c1"/>
+<circle cx="374" cy="332" r="34" fill="#b7c8c1"/>
+</svg>"""
+
+SERVICE_WORKER_JS = r'''
+self.addEventListener("install", (event) => {
+  event.waitUntil(self.skipWaiting());
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(self.clients.claim());
+});
+
+self.addEventListener("push", (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch (error) {
+    data = { body: event.data ? event.data.text() : "" };
+  }
+  const title = data.title || "Семейный бюджет";
+  const options = {
+    body: data.body || "Проверь, все ли доходы и расходы за сегодня записаны.",
+    icon: "/icon.svg",
+    badge: "/icon.svg",
+    tag: data.tag || "family-budget-reminder",
+    renotify: true,
+    data: { url: data.url || "/" }
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target = new URL(
+    (event.notification.data && event.notification.data.url) || "/",
+    self.location.origin
+  ).href;
+  event.waitUntil((async () => {
+    const windows = await self.clients.matchAll({
+      type: "window",
+      includeUncontrolled: true
+    });
+    for (const client of windows) {
+      if ("focus" in client) {
+        await client.focus();
+        if ("navigate" in client) await client.navigate(target);
+        return;
+      }
+    }
+    if (self.clients.openWindow) await self.clients.openWindow(target);
+  })());
+});
+'''
+
+
 class Default(WorkerEntrypoint):
     async def fetch(self, request):
         configure_d1(self.env.DB)
@@ -1650,6 +1729,40 @@ class Default(WorkerEntrypoint):
         await ensure_categories()
 
         url = urlparse(request.url)
+
+        if url.path == "/service-worker.js":
+            return Response(
+                SERVICE_WORKER_JS,
+                status=200,
+                headers={
+                    "Content-Type": "application/javascript; charset=utf-8",
+                    "Cache-Control": "no-cache",
+                    "Service-Worker-Allowed": "/",
+                    "X-Content-Type-Options": "nosniff",
+                },
+            )
+
+        if url.path == "/manifest.webmanifest":
+            return Response(
+                PWA_MANIFEST,
+                status=200,
+                headers={
+                    "Content-Type": "application/manifest+json; charset=utf-8",
+                    "Cache-Control": "public, max-age=3600",
+                    "X-Content-Type-Options": "nosniff",
+                },
+            )
+
+        if url.path == "/icon.svg":
+            return Response(
+                APP_ICON_SVG,
+                status=200,
+                headers={
+                    "Content-Type": "image/svg+xml",
+                    "Cache-Control": "public, max-age=86400",
+                    "X-Content-Type-Options": "nosniff",
+                },
+            )
 
         if url.path == "/health":
             return Response.json({
@@ -1798,21 +1911,15 @@ class Default(WorkerEntrypoint):
                     traceback.format_exc(),
                 )
 
-        token = getattr(env, "BOT_TOKEN", None)
-
-        if not token:
-            print("DAILY_ACTIVITY_REMINDER_SKIPPED: BOT_TOKEN is missing")
-            return
-
-        bot = TelegramBot(token)
-        print("CRON_DAILY_ACTIVITY_STARTED:", today.isoformat())
+        print("CRON_DAILY_WEB_PUSH_STARTED:", today.isoformat())
         try:
-            await daily_activity_check(bot)
+            await ensure_web_push_tables()
+            await send_daily_web_push(env)
         except Exception as error:
             print(
-                "CRON_DAILY_ACTIVITY_FAILED:",
+                "CRON_DAILY_WEB_PUSH_FAILED:",
                 repr(error),
                 traceback.format_exc(),
             )
             raise
-        print("CRON_DAILY_ACTIVITY_FINISHED:", today.isoformat())
+        print("CRON_DAILY_WEB_PUSH_FINISHED:", today.isoformat())
