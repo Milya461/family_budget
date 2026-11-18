@@ -1660,7 +1660,7 @@ PWA_MANIFEST = json.dumps({
             "sizes": "any",
             "type": "image/svg+xml",
             "purpose": "any maskable",
-        }
+        },
         {
             "src": "/apple-touch-icon.png",
             "sizes": "180x180",
