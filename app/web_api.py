@@ -21,6 +21,14 @@ from app.rebalancing import (
     rebalance_next_month,
 )
 from app.parser import classify_mandatory_payment
+from app.web_push import (
+    WEB_PUSH_PUBLIC_KEY,
+    ensure_web_push_tables,
+    get_daily_reminder_status,
+    remove_push_subscription,
+    save_push_subscription,
+    set_daily_reminder_status,
+)
 
 
 SESSION_COOKIE = "family_budget_session"
@@ -1426,6 +1434,43 @@ async def handle_web_api(path, request, env):
             if not VALID_MONTH.fullmatch(month):
                 return _json({"error": "Некорректный месяц."}, 400)
             return _json(await _dashboard(month))
+
+        if path == "/api/push/config" and method == "GET":
+            private_key = getattr(env, "WEB_PUSH_PRIVATE_JWK", None)
+            return _json({
+                "enabled": bool(private_key and WEB_PUSH_PUBLIC_KEY),
+                "public_key": WEB_PUSH_PUBLIC_KEY if private_key else "",
+                "setup_required": not bool(private_key),
+            })
+
+        if path == "/api/push/subscribe" and method == "POST":
+            if not getattr(env, "WEB_PUSH_PRIVATE_JWK", None):
+                return _json({
+                    "error": "Push-уведомления ещё не настроены в Cloudflare.",
+                    "setup_required": True,
+                }, 503)
+            body = await request.json()
+            subscription = body.get("subscription") or {}
+            await save_push_subscription(
+                subscription,
+                user_agent=request.headers.get("User-Agent", ""),
+            )
+            return _json({"success": True})
+
+        if path == "/api/push/unsubscribe" and method == "POST":
+            body = await request.json()
+            await remove_push_subscription(body.get("endpoint"))
+            return _json({"success": True})
+
+        if path == "/api/daily-reminder" and method == "GET":
+            return _json(await get_daily_reminder_status())
+
+        if path == "/api/daily-reminder" and method == "POST":
+            body = await request.json()
+            result = await set_daily_reminder_status(
+                str(body.get("status") or "")
+            )
+            return _json(result)
 
         if path == "/api/operation/cancel" and method == "POST":
             body = await request.json()
