@@ -518,9 +518,9 @@ async function loadPushSettings(){
     var config=await api('/api/push/config',{method:'GET',headers:{}});
     if(!config.enabled){
       state.pushEnabled=false;
-      button.textContent='Настроить push';
-      button.disabled=false;
-      button.title='Нужно добавить WEB_PUSH_PRIVATE_JWK в секреты Cloudflare Worker.';
+      button.textContent='Ожидает настройки push';
+      button.disabled=true;
+      button.title='Сначала добавь WEB_PUSH_PRIVATE_JWK в секреты Cloudflare Worker.';
       return;
     }
     state.pushEnabled=true;
