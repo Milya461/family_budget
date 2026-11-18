@@ -136,7 +136,7 @@ async def _encrypt_payload(subscription, payload):
     ciphertext = _js_bytes(await crypto.subtle.encrypt(
         _js_object({
             "name": "AES-GCM",
-            "iv": list(nonce),
+            "iv": _u8(nonce),
             "tagLength": 128,
         }),
         aes_key,
