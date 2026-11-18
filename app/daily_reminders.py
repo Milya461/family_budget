@@ -50,9 +50,9 @@ async def handle_daily_expenses_callback(bot, callback):
                 status,
                 updated_at
             )
-            VALUES (?, 'no_expenses', CURRENT_TIMESTAMP)
+            VALUES (?, 'acknowledged', CURRENT_TIMESTAMP)
             ON CONFLICT(check_date) DO UPDATE SET
-                status = 'no_expenses',
+                status = 'acknowledged',
                 updated_at = CURRENT_TIMESTAMP
             """,
             today,
@@ -60,13 +60,13 @@ async def handle_daily_expenses_callback(bot, callback):
 
         await bot.answer_callback(
             callback_id,
-            "Отмечено: сегодня без расходов.",
+            "Отмечено: сегодня больше нечего вносить.",
         )
 
         await bot.edit_message(
             chat_id,
             message_id,
-            "✅ Отмечено: сегодня не было записанных операций.",
+            "✅ Отмечено: сегодня больше нечего вносить.",
         )
         return
 
