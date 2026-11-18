@@ -3,9 +3,6 @@ import json
 import time
 from urllib.parse import urlparse
 
-from js import Object, Uint8Array, crypto, fetch as js_fetch
-from pyodide.ffi import to_js
-
 from app.db import execute, fetch_all, fetch_one
 from app.payment_flow import get_moscow_today
 
@@ -27,18 +24,23 @@ def _b64url_encode(value):
 
 
 def _u8(value):
+    from js import Uint8Array
     return Uint8Array.new(list(bytes(value)))
 
 
 def _js_bytes(value):
+    from js import Uint8Array
     return bytes(int(item) for item in Uint8Array.new(value))
 
 
 def _js_object(value):
+    from js import Object
+    from pyodide.ffi import to_js
     return to_js(value, dict_converter=Object.fromEntries)
 
 
 async def _hmac_sha256(key_bytes, data):
+    from js import crypto
     key = await crypto.subtle.importKey(
         "raw",
         _u8(key_bytes),
@@ -51,6 +53,7 @@ async def _hmac_sha256(key_bytes, data):
 
 
 async def _vapid_token(endpoint, private_jwk):
+    from js import crypto
     parsed = urlparse(endpoint)
     audience = f"{parsed.scheme}://{parsed.netloc}"
     now = int(time.time())
@@ -84,6 +87,7 @@ async def _vapid_token(endpoint, private_jwk):
 
 
 async def _encrypt_payload(subscription, payload):
+    from js import crypto
     user_public = _b64url_decode(subscription["keys"]["p256dh"])
     auth_secret = _b64url_decode(subscription["keys"]["auth"])
 
@@ -257,6 +261,7 @@ async def set_daily_reminder_status(status):
 
 
 async def _send_one(subscription, payload, private_jwk):
+    from js import fetch as js_fetch
     endpoint = subscription["endpoint"]
     push_subscription = {
         "endpoint": endpoint,
