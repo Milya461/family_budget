@@ -180,7 +180,23 @@ async def save_push_subscription(subscription, user_agent=""):
     p256dh = str(keys.get("p256dh") or "").strip()
     auth = str(keys.get("auth") or "").strip()
 
-    if not endpoint.startswith("https://") or len(endpoint) > 2048:
+    parsed_endpoint = urlparse(endpoint)
+    host = (parsed_endpoint.hostname or "").lower()
+    allowed_host = (
+        host == "fcm.googleapis.com"
+        or host.endswith(".fcm.googleapis.com")
+        or host == "web.push.apple.com"
+        or host.endswith(".push.apple.com")
+        or host == "updates.push.services.mozilla.com"
+        or host == "push.services.mozilla.com"
+        or host.endswith(".push.services.mozilla.com")
+        or host.endswith(".notify.windows.com")
+    )
+    if (
+        parsed_endpoint.scheme != "https"
+        or not allowed_host
+        or len(endpoint) > 2048
+    ):
         raise ValueError("Некорректный адрес push-подписки.")
     if not p256dh or not auth or len(p256dh) > 256 or len(auth) > 128:
         raise ValueError("В подписке отсутствуют ключи браузера.")
