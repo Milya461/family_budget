@@ -242,7 +242,14 @@ async def set_daily_reminder_status(status):
 
 async def _send_one(subscription, payload, private_jwk):
     endpoint = subscription["endpoint"]
-    encrypted = await _encrypt_payload(subscription, payload)
+    push_subscription = {
+        "endpoint": endpoint,
+        "keys": {
+            "p256dh": subscription["p256dh"],
+            "auth": subscription["auth"],
+        },
+    }
+    encrypted = await _encrypt_payload(push_subscription, payload)
     token = await _vapid_token(endpoint, private_jwk)
     headers = _js_object({
         "Authorization": (
