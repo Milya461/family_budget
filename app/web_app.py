@@ -201,16 +201,6 @@ tbody tr:last-child td{border-bottom:0}
 .operation-cancel{padding:7px 8px;font-size:9px;white-space:nowrap}
 .operation-cancel:hover{background:#6b3833;border-color:#6b3833;color:#fff}
 @media(max-width:600px){#operationTable .operation-cancel{font-size:8px;padding:6px}}
-
-.push-enable{border:1px solid var(--line);background:transparent;padding:9px 11px;font-size:10px;letter-spacing:.04em;text-transform:uppercase}
-.push-enable:disabled{opacity:.55;cursor:not-allowed}
-.daily-reminder{margin:14px 0 0;padding:16px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);display:flex;gap:18px;align-items:center;justify-content:space-between}
-.daily-reminder[hidden]{display:none}
-.daily-reminder strong{display:block;font-size:13px;text-transform:uppercase;letter-spacing:.05em}
-.daily-reminder p{margin:4px 0 0;color:var(--muted);font-size:12px}
-.daily-reminder-actions{display:flex;gap:8px;flex-wrap:wrap}
-.daily-reminder-actions button{border:1px solid var(--line);background:transparent;padding:9px 12px;font-size:11px}
-.daily-reminder-actions .reminder-primary{background:var(--ink);color:var(--paper)}
 @media(max-width:600px){.push-enable{padding:8px 7px;font-size:8px}.daily-reminder{align-items:flex-start;flex-direction:column}.daily-reminder-actions{width:100%}.daily-reminder-actions button{flex:1}}
 </style>
 </head>
@@ -219,21 +209,9 @@ tbody tr:last-child td{border-bottom:0}
 <header class="topbar">
   <div class="brand">FAM / BUDGET<small>СЕМЕЙНАЯ ФИНАНСОВАЯ СИСТЕМА</small></div>
   <nav class="nav" aria-label="Управление аккаунтом">
-    <button class="push-enable" id="pushEnableButton" type="button">Включить уведомления</button>
-    <button class="push-enable" id="pushTestButton" type="button" disabled title="Сначала включи push-уведомления">Тест push</button>
     <button class="logout" id="logoutButton" type="button">Выйти ↗︎</button>
   </nav>
 </header>
-<section class="daily-reminder" id="dailyReminderPanel" hidden>
-  <div>
-    <strong>Ежедневная проверка бюджета</strong>
-    <p id="dailyReminderText">Проверь, все ли доходы и расходы за сегодня записаны.</p>
-  </div>
-  <div class="daily-reminder-actions">
-    <button class="reminder-primary" id="dailyReminderDone" type="button">Всё записано</button>
-    <button id="dailyReminderForgot" type="button">Нужно внести операции</button>
-  </div>
-</section>
 <main>
 <section class="app-view active" data-view="home" id="view-home">
 <section class="hero" id="overview">
@@ -466,7 +444,7 @@ tbody tr:last-child td{border-bottom:0}
 <script>
 (function(){
 'use strict';
-var state = {data:null, month:'', busy:false, categoryRequestId:0, pushEnabled:false};
+var state = {data:null, month:'', busy:false, categoryRequestId:0};
 var $ = function(id){return document.getElementById(id);};
 var numberFormat = new Intl.NumberFormat('ru-RU',{minimumFractionDigits:0,maximumFractionDigits:2});
 function money(value){return numberFormat.format(Number(value||0))+' ₽';}
@@ -496,182 +474,6 @@ function urlBase64ToUint8Array(base64String){
   for(var i=0;i<raw.length;i++)output[i]=raw.charCodeAt(i);
   return output;
 }
-function pushKeyMatches(currentKey, publicKey){
-  if(!currentKey)return false;
-  var current=new Uint8Array(currentKey);
-  var expected=urlBase64ToUint8Array(publicKey);
-  if(current.length!==expected.length)return false;
-  for(var i=0;i<current.length;i++)if(current[i]!==expected[i])return false;
-  return true;
-}
-function isIosDevice(){
-  return /iphone|ipad|ipod/i.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
-}
-function isStandaloneApp(){
-  return (window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches)||navigator.standalone===true;
-}
-async function prepareServiceWorker(){
-  if(!('serviceWorker' in navigator))return false;
-  try{await navigator.serviceWorker.register('/service-worker.js',{scope:'/'});return true;}
-  catch(error){console.error('SERVICE_WORKER_REGISTER_FAILED',error);return false;}
-}
-async function loadPushSettings(){
-  var button=$('pushEnableButton');
-  if(!('serviceWorker' in navigator)||!('PushManager' in window)||!('Notification' in window)){
-    button.textContent='Push недоступен';
-    button.disabled=true;
-    button.title='Открой веб-приложение в современном браузере.';
-    $('pushTestButton').disabled=true;
-    return;
-  }
-  try{
-    var config=await api('/api/push/config',{method:'GET',headers:{}});
-    if(!config.enabled){
-      state.pushEnabled=false;
-      button.textContent='Ожидает настройки push';
-      button.disabled=true;
-      button.title='Сначала добавь WEB_PUSH_PRIVATE_JWK в секреты Cloudflare Worker.';
-      $('pushTestButton').disabled=true;
-      return;
-    }
-    state.pushEnabled=true;
-    $('pushTestButton').disabled=false;
-    $('pushTestButton').title='Отправить тестовое уведомление на все подписанные устройства.';
-    var registration=await navigator.serviceWorker.ready;
-    var subscription=await registration.pushManager.getSubscription();
-    var keyCurrent=subscription&&pushKeyMatches(
-      subscription.options.applicationServerKey,
-      config.public_key
-    );
-    button.textContent=keyCurrent?'Уведомления включены':(subscription?'Обновить уведомления':'Включить уведомления');
-    button.disabled=false;
-    button.title=keyCurrent?'Это устройство подписано на push-уведомления':(subscription?'Нужно обновить ключ push-уведомлений':'Разреши уведомления для этого устройства');
-  }catch(error){
-    if(error.message!=='Нужно войти заново.')console.warn('PUSH_SETTINGS_LOAD_FAILED',error);
-  }
-}
-async function enablePushNotifications(){
-  var button=$('pushEnableButton');
-  if(isIosDevice()&&!isStandaloneApp()){
-    window.alert('На iPhone сначала добавь приложение на экран «Домой»: открой эту страницу в Safari, нажми «Поделиться» → «На экран Домой», открой появившийся значок и снова нажми «Включить уведомления».');
-    return;
-  }
-  if(!('serviceWorker' in navigator)||!('PushManager' in window)||!('Notification' in window)){
-    showToast('Этот браузер не поддерживает push-уведомления.');
-    return;
-  }
-  if(button.disabled)return;
-  button.disabled=true;
-  showToast('Проверяю push-подписку…');
-  try{
-    var permission=Notification.permission;
-    if(permission==='default')permission=await Notification.requestPermission();
-    if(permission!=='granted'){
-      showToast(permission==='denied'?'Уведомления запрещены в настройках браузера.':'Разрешение на уведомления не выдано.');
-      return;
-    }
-    showToast('Проверяю настройки сервера…');
-    var registered=await prepareServiceWorker();
-    if(!registered)throw new Error('Не удалось зарегистрировать service worker. Обнови страницу и попробуй ещё раз.');
-    var config=await api('/api/push/config',{method:'GET',headers:{}});
-    if(!config.enabled){
-      showToast('На сервере не настроен ключ push-уведомлений.');
-      return;
-    }
-    showToast('Проверяю подписку устройства…');
-    var registration=await Promise.race([
-      navigator.serviceWorker.ready,
-      new Promise(function(_,reject){window.setTimeout(function(){reject(new Error('Service worker не запустился. Полностью закрой приложение и открой снова.'));},10000);})
-    ]);
-    var subscription=await registration.pushManager.getSubscription();
-    if(subscription&&!pushKeyMatches(subscription.options.applicationServerKey,config.public_key)){
-      await subscription.unsubscribe();
-      subscription=null;
-    }
-    if(!subscription){
-      subscription=await registration.pushManager.subscribe({
-        userVisibleOnly:true,
-        applicationServerKey:urlBase64ToUint8Array(config.public_key)
-      });
-    }
-    showToast('Отправляю подписку на сервер…');
-    var subscribeResult=await api('/api/push/subscribe',{
-      method:'POST',
-      body:JSON.stringify({subscription:subscription.toJSON()})
-    });
-    $('pushEnableButton').textContent='Уведомления включены';
-    $('pushEnableButton').title='Это устройство подписано на push-уведомления';
-    var retry=subscribeResult&&subscribeResult.reminder_retry;
-    if(retry&&Number(retry.delivered)>0){
-      showToast('Сервер принял уведомление для отправки. Проверь центр уведомлений iPhone.');
-    }else if(retry&&retry.status==='pending'){
-      showToast('Подписка сохранена, но сервер не смог отправить уведомление. Нужна диагностика.');
-    }else{
-      showToast('Подписка сохранена. Ответ отправки: '+JSON.stringify(retry||'повтор не запускался'));
-    }
-  }catch(error){
-    console.error('PUSH_SUBSCRIBE_FAILED',error);
-    showToast(error.message||'Не удалось включить уведомления.');
-  }finally{
-    button.disabled=false;
-  }
-}
-async function sendPushTest(){
-  var button=$('pushTestButton');
-  if(button.disabled)return;
-  button.disabled=true;
-  showToast('Отправляю тестовое уведомление на подписанные устройства…');
-  try{
-    var result=await api('/api/push/test',{method:'POST',body:'{}'});
-    if(result.status==='accepted'){
-      showToast('Push-сервис принял уведомление: '+Number(result.delivered)+' из '+Number(result.attempted)+'. Проверь центр уведомлений iPhone.');
-    }else if(result.status==='no_subscriptions'){
-      showToast('На сервере пока нет сохранённых push-подписок.');
-    }else if(result.status==='missing_key'){
-      showToast('В Cloudflare отсутствует секрет WEB_PUSH_PRIVATE_JWK.');
-    }else if(result.status==='invalid_key'){
-      showToast('Секрет WEB_PUSH_PRIVATE_JWK не удалось прочитать как JWK.');
-    }else if(result.status==='key_mismatch'){
-      showToast('Приватный VAPID-ключ не совпадает с публичным ключом приложения.');
-    }else{
-      var details=(result.results||[]).map(function(item){
-        return item.http_status?'HTTP '+item.http_status:(item.error_type||'ошибка отправки');
-      }).join(', ');
-      showToast('Push не принят сервером уведомлений. '+(details||'Подробности доступны в журналах Worker.'));
-    }
-  }catch(error){
-    showToast(error.message||'Не удалось выполнить тест push.');
-  }finally{
-    button.disabled=!state.pushEnabled;
-  }
-}
-async function loadDailyReminder(){
-  try{
-    var reminder=await api('/api/daily-reminder',{method:'GET',headers:{}});
-    var panel=$('dailyReminderPanel');
-    panel.hidden=!reminder.visible;
-    if(!reminder.visible)return;
-    if(reminder.status==='forgot'){
-      $('dailyReminderText').textContent='Ты отметила, что нужно внести операции. Добавь пропущенные записи, затем подтверди проверку.';
-      $('dailyReminderDone').textContent='✅ Всё внесла';
-      $('dailyReminderForgot').hidden=true;
-    }else{
-      $('dailyReminderText').textContent='Проверь, все ли доходы и расходы за сегодня записаны. Если операций не было — просто подтверди.';
-      $('dailyReminderDone').textContent='Всё записано';
-      $('dailyReminderForgot').hidden=false;
-    }
-  }catch(error){
-    if(error.message!=='Нужно войти заново.')console.warn('DAILY_REMINDER_LOAD_FAILED',error);
-  }
-}
-async function updateDailyReminder(status){
-  try{
-    await api('/api/daily-reminder',{method:'POST',body:JSON.stringify({status:status})});
-    await loadDailyReminder();
-    showToast(status==='acknowledged'?'Ежедневная проверка отмечена.':'Отметка сохранена. Не забудь внести операции.');
-  }catch(error){showToast(error.message);}
-}
-
 function currentMonth(){return new Date().toISOString().slice(0,7);}
 function showLogin(){ $('loginOverlay').classList.add('show'); $('loginError').textContent=''; }
 
@@ -871,16 +673,10 @@ $('loginForm').addEventListener('submit',async function(event){
     var data={};try{data=await response.json();}catch(e){}
     if(!response.ok){$('loginError').textContent=data.error||'Не удалось войти.';return;}
     $('loginOverlay').classList.remove('show');$('passwordInput').value='';$('loginForm').style.display='grid';$('loginMessage').textContent='Введи пароль веб-приложения, чтобы открыть семейный бюджет.';
-    showView('home');await reload();await loadPushSettings();await loadDailyReminder();showToast('Вход выполнен.');
+    showView('home');await reload();showToast('Вход выполнен.');
   }catch(e){$('loginError').textContent='Не удалось подключиться. Попробуй ещё раз.';}
 });
 $('logoutButton').addEventListener('click',async function(){try{await api('/api/logout',{method:'POST',body:'{}'});}catch(e){}showLogin();});
-$('pushEnableButton').addEventListener('click',enablePushNotifications);
-$('pushTestButton').addEventListener('click',sendPushTest);
-$('dailyReminderDone').addEventListener('click',function(){updateDailyReminder('acknowledged');});
-$('dailyReminderForgot').addEventListener('click',function(){updateDailyReminder('forgot');});
-document.addEventListener('visibilitychange',function(){if(!document.hidden)loadDailyReminder();});
-window.addEventListener('pageshow',function(){loadDailyReminder();});
 
 Array.prototype.forEach.call(document.querySelectorAll('[data-view-target]'),function(button){
   button.addEventListener('click',function(event){
@@ -926,8 +722,6 @@ $('balanceForm').addEventListener('submit',function(event){event.preventDefault(
   await prepareServiceWorker();
   try{
     await reload();
-    await loadPushSettings();
-    await loadDailyReminder();
   }catch(error){if(error.message!=='Нужно войти заново.')showToast(error.message);}
 })();
 })();
