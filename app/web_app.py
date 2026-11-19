@@ -546,6 +546,7 @@ async function loadPushSettings(){
   }
 }
 async function enablePushNotifications(){
+  var button=$('pushEnableButton');
   if(isIosDevice()&&!isStandaloneApp()){
     window.alert('На iPhone сначала добавь приложение на экран «Домой»: открой эту страницу в Safari, нажми «Поделиться» → «На экран Домой», открой появившийся значок и снова нажми «Включить уведомления».');
     return;
@@ -554,19 +555,29 @@ async function enablePushNotifications(){
     showToast('Этот браузер не поддерживает push-уведомления.');
     return;
   }
+  if(button.disabled)return;
+  button.disabled=true;
+  showToast('Проверяю push-подписку…');
   try{
-    var permission=await Notification.requestPermission();
+    var permission=Notification.permission;
+    if(permission==='default')permission=await Notification.requestPermission();
     if(permission!=='granted'){
       showToast(permission==='denied'?'Уведомления запрещены в настройках браузера.':'Разрешение на уведомления не выдано.');
       return;
     }
-    await prepareServiceWorker();
+    showToast('Проверяю настройки сервера…');
+    var registered=await prepareServiceWorker();
+    if(!registered)throw new Error('Не удалось зарегистрировать service worker. Обнови страницу и попробуй ещё раз.');
     var config=await api('/api/push/config',{method:'GET',headers:{}});
     if(!config.enabled){
-      showToast('Сначала нужно добавить ключ push-уведомлений в Cloudflare.');
+      showToast('На сервере не настроен ключ push-уведомлений.');
       return;
     }
-    var registration=await navigator.serviceWorker.ready;
+    showToast('Проверяю подписку устройства…');
+    var registration=await Promise.race([
+      navigator.serviceWorker.ready,
+      new Promise(function(_,reject){window.setTimeout(function(){reject(new Error('Service worker не запустился. Полностью закрой приложение и открой снова.'));},10000);})
+    ]);
     var subscription=await registration.pushManager.getSubscription();
     if(subscription&&!pushKeyMatches(subscription.options.applicationServerKey,config.public_key)){
       await subscription.unsubscribe();
@@ -578,6 +589,7 @@ async function enablePushNotifications(){
         applicationServerKey:urlBase64ToUint8Array(config.public_key)
       });
     }
+    showToast('Отправляю подписку на сервер…');
     var subscribeResult=await api('/api/push/subscribe',{
       method:'POST',
       body:JSON.stringify({subscription:subscription.toJSON()})
@@ -593,7 +605,10 @@ async function enablePushNotifications(){
       showToast('Подписка сохранена. Ответ отправки: '+JSON.stringify(retry||'повтор не запускался'));
     }
   }catch(error){
+    console.error('PUSH_SUBSCRIBE_FAILED',error);
     showToast(error.message||'Не удалось включить уведомления.');
+  }finally{
+    button.disabled=false;
   }
 }
 async function loadDailyReminder(){
