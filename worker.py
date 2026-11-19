@@ -1895,11 +1895,28 @@ class Default(WorkerEntrypoint):
             "CRON_EVENT_RECEIVED:",
             {"cron": getattr(controller, "cron", None)},
         )
-        configure_d1(env.DB)
-        await ensure_runtime_tables()
-        await ensure_categories()
+        try:
+            print("CRON_D1_CONFIGURE_STARTED")
+            configure_d1(env.DB)
+            print("CRON_D1_CONFIGURE_FINISHED")
 
-        today = get_moscow_today()
+            print("CRON_RUNTIME_TABLES_STARTED")
+            await ensure_runtime_tables()
+            print("CRON_RUNTIME_TABLES_FINISHED")
+
+            print("CRON_CATEGORIES_STARTED")
+            await ensure_categories()
+            print("CRON_CATEGORIES_FINISHED")
+
+            today = get_moscow_today()
+            print("CRON_INITIALIZATION_FINISHED:", today.isoformat())
+        except Exception as error:
+            print(
+                "CRON_INITIALIZATION_FAILED:",
+                repr(error),
+                traceback.format_exc(),
+            )
+            raise
 
         # Automatic limit adjustment runs on the first day of each month.
         # rebalance_next_month is idempotent: the same source month can only
