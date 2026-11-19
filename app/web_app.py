@@ -578,13 +578,20 @@ async function enablePushNotifications(){
         applicationServerKey:urlBase64ToUint8Array(config.public_key)
       });
     }
-    await api('/api/push/subscribe',{
+    var subscribeResult=await api('/api/push/subscribe',{
       method:'POST',
       body:JSON.stringify({subscription:subscription.toJSON()})
     });
     $('pushEnableButton').textContent='Уведомления включены';
     $('pushEnableButton').title='Это устройство подписано на push-уведомления';
-    showToast('Уведомления включены на этом устройстве.');
+    var retry=subscribeResult&&subscribeResult.reminder_retry;
+    if(retry&&Number(retry.delivered)>0){
+      showToast('Сервер принял уведомление для отправки. Проверь центр уведомлений iPhone.');
+    }else if(retry&&retry.status==='pending'){
+      showToast('Подписка сохранена, но сервер не смог отправить уведомление. Нужна диагностика.');
+    }else{
+      showToast('Подписка сохранена. Ответ отправки: '+JSON.stringify(retry||'повтор не запускался'));
+    }
   }catch(error){
     showToast(error.message||'Не удалось включить уведомления.');
   }
