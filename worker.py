@@ -38,7 +38,6 @@ from app.rebalancing import (
     mark_stock_purchase,
     rebalance_next_month,
 )
-from app.web_push import ensure_web_push_tables, send_daily_web_push
 from app.daily_reminders import handle_daily_expenses_callback
 from app.parser import parse_operation, extract_amount
 from app.setup import ensure_categories
@@ -1686,25 +1685,6 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim());
 });
 
-self.addEventListener("push", (event) => {
-  let data = {};
-  try {
-    data = event.data ? event.data.json() : {};
-  } catch (error) {
-    data = { body: event.data ? event.data.text() : "" };
-  }
-  const title = data.title || "Семейный бюджет";
-  const options = {
-    body: data.body || "Проверь, все ли доходы и расходы за сегодня записаны.",
-    icon: "/apple-touch-icon.png",
-    badge: "/apple-touch-icon.png",
-    tag: data.tag || "family-budget-reminder",
-    renotify: true,
-    data: { url: data.url || "/" }
-  };
-  event.waitUntil(self.registration.showNotification(title, options));
-});
-
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const target = new URL(
@@ -1946,15 +1926,3 @@ class Default(WorkerEntrypoint):
                     traceback.format_exc(),
                 )
 
-        print("CRON_DAILY_WEB_PUSH_STARTED:", today.isoformat())
-        try:
-            await ensure_web_push_tables()
-            await send_daily_web_push(env)
-        except Exception as error:
-            print(
-                "CRON_DAILY_WEB_PUSH_FAILED:",
-                repr(error),
-                traceback.format_exc(),
-            )
-            raise
-        print("CRON_DAILY_WEB_PUSH_FINISHED:", today.isoformat())
