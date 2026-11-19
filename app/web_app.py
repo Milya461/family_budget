@@ -495,6 +495,14 @@ function urlBase64ToUint8Array(base64String){
   for(var i=0;i<raw.length;i++)output[i]=raw.charCodeAt(i);
   return output;
 }
+function pushKeyMatches(currentKey, publicKey){
+  if(!currentKey)return false;
+  var current=new Uint8Array(currentKey);
+  var expected=urlBase64ToUint8Array(publicKey);
+  if(current.length!==expected.length)return false;
+  for(var i=0;i<current.length;i++)if(current[i]!==expected[i])return false;
+  return true;
+}
 function isIosDevice(){
   return /iphone|ipad|ipod/i.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
 }
@@ -556,6 +564,10 @@ async function enablePushNotifications(){
     }
     var registration=await navigator.serviceWorker.ready;
     var subscription=await registration.pushManager.getSubscription();
+    if(subscription&&!pushKeyMatches(subscription.options.applicationServerKey,config.public_key)){
+      await subscription.unsubscribe();
+      subscription=null;
+    }
     if(!subscription){
       subscription=await registration.pushManager.subscribe({
         userVisibleOnly:true,
