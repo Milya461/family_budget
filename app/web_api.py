@@ -27,6 +27,7 @@ from app.web_push import (
     get_daily_reminder_status,
     remove_push_subscription,
     save_push_subscription,
+    send_daily_web_push,
     set_daily_reminder_status,
 )
 
@@ -1455,7 +1456,14 @@ async def handle_web_api(path, request, env):
                 subscription,
                 user_agent=request.headers.get("User-Agent") or "",
             )
-            return _json({"success": True})
+            reminder = await get_daily_reminder_status()
+            retry_result = None
+            if reminder.get("status") == "pending":
+                retry_result = await send_daily_web_push(env)
+            return _json({
+                "success": True,
+                "reminder_retry": retry_result,
+            })
 
         if path == "/api/push/unsubscribe" and method == "POST":
             body = await request.json()
