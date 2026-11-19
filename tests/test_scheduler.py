@@ -35,10 +35,10 @@ async def test_daily_web_reminder_is_saved_without_subscribed_devices(monkeypatc
     await web_push.send_daily_web_push(SimpleNamespace())
 
     execute.assert_awaited_once()
-    assert "INSERT OR IGNORE INTO DAILY_EXPENSE_CHECKS" in (
+    assert "INSERT INTO DAILY_EXPENSE_CHECKS" in (
         execute.await_args.args[0].upper()
     )
-    assert execute.await_args.args[1:] == ("2026-11-19",)
+    assert execute.await_args.args[1:] == ("2026-11-19", "pending")
 
 
 @pytest.mark.asyncio
@@ -102,3 +102,25 @@ async def test_daily_reminder_can_be_acknowledged_in_web_app(monkeypatch):
         "2026-11-19",
         "acknowledged",
     )
+
+
+def test_private_vapid_key_matches_configured_public_key():
+    private_jwk = {
+        "kty": "EC",
+        "crv": "P-256",
+        "x": "9rWYSkwPntrF0qE52h-0WMP1f5PouoCmh_4nPW1olhk",
+        "y": "F6iWzeCnkm6uTnQPcMTtEVN_ay5TKQcoh-8yuxuQRPY",
+        "d": "MVC1tpxRZQewXDssxINwPK5qNrqPSjBxL5QzoOvOMww",
+    }
+    assert web_push._private_key_matches_public(private_jwk)
+
+
+def test_mismatched_private_vapid_key_is_rejected():
+    private_jwk = {
+        "kty": "EC",
+        "crv": "P-256",
+        "x": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "y": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "d": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    }
+    assert not web_push._private_key_matches_public(private_jwk)
