@@ -314,7 +314,7 @@ def _private_key_matches_public(private_jwk):
         return False
 
 
-async def send_daily_web_push(env):
+async def send_daily_web_push(env, force=False):
     await ensure_web_push_tables()
     today = get_moscow_today().isoformat()
 
@@ -324,10 +324,13 @@ async def send_daily_web_push(env):
         WHERE check_date = ?
         LIMIT 1
     """, today)
-    if existing and existing.get("status") in ("reminded", "acknowledged", "forgot"):
-        print("DAILY_WEB_PUSH_SKIPPED: reminder already handled", today,
+    if existing and existing.get("status") in ("acknowledged", "forgot"):
+        print("DAILY_WEB_PUSH_SKIPPED: reminder acknowledged", today,
               existing.get("status"))
         return {"status": existing.get("status"), "delivered": 0}
+    if existing and existing.get("status") == "reminded" and not force:
+        print("DAILY_WEB_PUSH_SKIPPED: reminder already delivered", today)
+        return {"status": "reminded", "delivered": 0}
 
     subscriptions = await fetch_all("""
         SELECT id, endpoint, p256dh, auth
