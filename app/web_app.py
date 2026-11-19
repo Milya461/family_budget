@@ -534,9 +534,13 @@ async function loadPushSettings(){
     state.pushEnabled=true;
     var registration=await navigator.serviceWorker.ready;
     var subscription=await registration.pushManager.getSubscription();
-    button.textContent=subscription?'Уведомления включены':'Включить уведомления';
+    var keyCurrent=subscription&&pushKeyMatches(
+      subscription.options.applicationServerKey,
+      config.public_key
+    );
+    button.textContent=keyCurrent?'Уведомления включены':(subscription?'Обновить уведомления':'Включить уведомления');
     button.disabled=false;
-    button.title=subscription?'Это устройство подписано на push-уведомления':'Разреши уведомления для этого устройства';
+    button.title=keyCurrent?'Это устройство подписано на push-уведомления':(subscription?'Нужно обновить ключ push-уведомлений':'Разреши уведомления для этого устройства');
   }catch(error){
     if(error.message!=='Нужно войти заново.')console.warn('PUSH_SETTINGS_LOAD_FAILED',error);
   }
