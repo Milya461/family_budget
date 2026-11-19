@@ -1458,8 +1458,8 @@ async def handle_web_api(path, request, env):
             )
             reminder = await get_daily_reminder_status()
             retry_result = None
-            if reminder.get("status") == "pending":
-                retry_result = await send_daily_web_push(env)
+            if reminder.get("status") in ("pending", "reminded"):
+                retry_result = await send_daily_web_push(env, force=True)
             return _json({
                 "success": True,
                 "reminder_retry": retry_result,
