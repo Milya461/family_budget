@@ -9,7 +9,7 @@ from app.payment_flow import get_moscow_today
 
 # A P-256 VAPID public key. The matching private JWK is stored only as a
 # Cloudflare Worker secret named WEB_PUSH_PRIVATE_JWK.
-WEB_PUSH_PUBLIC_KEY = "BLVLglcbTKsA4T8XrGmh5xO0Nsto2x5CRsqudsFWca8aTFMWKurDM9ibo9CLVw2zJ-1yh9_uTnyy2PXTwiCuuCQ"
+WEB_PUSH_PUBLIC_KEY = "BPa1mEpMD57axdKhOdoftFjD9X-T6LqApof-Jz1taJYZF6iWzeCnkm6uTnQPcMTtEVN_ay5TKQcoh-8yuxuQRPY"
 VAPID_SUBJECT = "https://github.com/Milya461/family_budget"
 
 
@@ -241,7 +241,7 @@ async def get_daily_reminder_status():
     return {
         "date": today,
         "status": (row or {}).get("status", "not_sent"),
-        "visible": bool(row and row.get("status") in ("reminded", "forgot")),
+        "visible": bool(row and row.get("status") in ("pending", "reminded", "forgot")),
     }
 
 
@@ -292,6 +292,28 @@ async def _send_one(subscription, payload, private_jwk):
     return int(response.status)
 
 
+async def _save_reminder_state(today, status):
+    await execute("""
+        INSERT INTO daily_expense_checks (check_date, status, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(check_date) DO UPDATE SET
+            status = excluded.status,
+            updated_at = CURRENT_TIMESTAMP
+    """, today, status)
+
+
+def _private_key_matches_public(private_jwk):
+    try:
+        public_bytes = (
+            b"\x04"
+            + _b64url_decode(private_jwk["x"])
+            + _b64url_decode(private_jwk["y"])
+        )
+        return _b64url_encode(public_bytes) == WEB_PUSH_PUBLIC_KEY
+    except Exception:
+        return False
+
+
 async def send_daily_web_push(env):
     await ensure_web_push_tables()
     today = get_moscow_today().isoformat()
@@ -302,16 +324,10 @@ async def send_daily_web_push(env):
         WHERE check_date = ?
         LIMIT 1
     """, today)
-    if existing:
-        print("DAILY_WEB_PUSH_SKIPPED: reminder already handled", today)
-        return
-
-    # Save the reminder even if no device is subscribed yet. It will appear
-    # inside the web app the next time it is opened.
-    await execute("""
-        INSERT OR IGNORE INTO daily_expense_checks (check_date, status)
-        VALUES (?, 'reminded')
-    """, today)
+    if existing and existing.get("status") in ("reminded", "acknowledged", "forgot"):
+        print("DAILY_WEB_PUSH_SKIPPED: reminder already handled", today,
+              existing.get("status"))
+        return {"status": existing.get("status"), "delivered": 0}
 
     subscriptions = await fetch_all("""
         SELECT id, endpoint, p256dh, auth
@@ -319,18 +335,27 @@ async def send_daily_web_push(env):
         ORDER BY id
     """)
     if not subscriptions:
-        print("DAILY_WEB_PUSH_NO_SUBSCRIPTIONS:", today)
-        return
+        await _save_reminder_state(today, "pending")
+        print("DAILY_WEB_PUSH_PENDING: no subscribed devices", today)
+        return {"status": "pending", "delivered": 0}
 
     private_text = getattr(env, "WEB_PUSH_PRIVATE_JWK", None)
     if not private_text:
-        print("DAILY_WEB_PUSH_SKIPPED: WEB_PUSH_PRIVATE_JWK is missing")
-        return
+        await _save_reminder_state(today, "pending")
+        print("DAILY_WEB_PUSH_PENDING: WEB_PUSH_PRIVATE_JWK is missing", today)
+        return {"status": "pending", "delivered": 0}
+
     try:
         private_jwk = json.loads(str(private_text))
     except Exception as error:
+        await _save_reminder_state(today, "pending")
         print("DAILY_WEB_PUSH_INVALID_PRIVATE_KEY:", repr(error))
-        return
+        return {"status": "pending", "delivered": 0}
+
+    if not _private_key_matches_public(private_jwk):
+        await _save_reminder_state(today, "pending")
+        print("DAILY_WEB_PUSH_KEY_MISMATCH: private key does not match public key")
+        return {"status": "pending", "delivered": 0}
 
     payload = json.dumps({
         "title": "Семейный бюджет",
@@ -357,5 +382,8 @@ async def send_daily_web_push(env):
         except Exception as error:
             print("DAILY_WEB_PUSH_ERROR:", subscription["id"], repr(error))
 
+    final_status = "reminded" if delivered else "pending"
+    await _save_reminder_state(today, final_status)
     print("DAILY_WEB_PUSH_FINISHED:", today, "delivered=", delivered,
-          "subscriptions=", len(subscriptions))
+          "subscriptions=", len(subscriptions), "status=", final_status)
+    return {"status": final_status, "delivered": delivered}
