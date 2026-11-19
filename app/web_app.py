@@ -220,6 +220,7 @@ tbody tr:last-child td{border-bottom:0}
   <div class="brand">FAM / BUDGET<small>СЕМЕЙНАЯ ФИНАНСОВАЯ СИСТЕМА</small></div>
   <nav class="nav" aria-label="Управление аккаунтом">
     <button class="push-enable" id="pushEnableButton" type="button">Включить уведомления</button>
+    <button class="push-enable" id="pushTestButton" type="button" disabled title="Сначала включи push-уведомления">Тест push</button>
     <button class="logout" id="logoutButton" type="button">Выйти ↗︎</button>
   </nav>
 </header>
@@ -520,6 +521,7 @@ async function loadPushSettings(){
     button.textContent='Push недоступен';
     button.disabled=true;
     button.title='Открой веб-приложение в современном браузере.';
+    $('pushTestButton').disabled=true;
     return;
   }
   try{
@@ -529,9 +531,12 @@ async function loadPushSettings(){
       button.textContent='Ожидает настройки push';
       button.disabled=true;
       button.title='Сначала добавь WEB_PUSH_PRIVATE_JWK в секреты Cloudflare Worker.';
+      $('pushTestButton').disabled=true;
       return;
     }
     state.pushEnabled=true;
+    $('pushTestButton').disabled=false;
+    $('pushTestButton').title='Отправить тестовое уведомление на все подписанные устройства.';
     var registration=await navigator.serviceWorker.ready;
     var subscription=await registration.pushManager.getSubscription();
     var keyCurrent=subscription&&pushKeyMatches(
@@ -609,6 +614,35 @@ async function enablePushNotifications(){
     showToast(error.message||'Не удалось включить уведомления.');
   }finally{
     button.disabled=false;
+  }
+}
+async function sendPushTest(){
+  var button=$('pushTestButton');
+  if(button.disabled)return;
+  button.disabled=true;
+  showToast('Отправляю тестовое уведомление на подписанные устройства…');
+  try{
+    var result=await api('/api/push/test',{method:'POST',body:'{}'});
+    if(result.status==='accepted'){
+      showToast('Push-сервис принял уведомление: '+Number(result.delivered)+' из '+Number(result.attempted)+'. Проверь центр уведомлений iPhone.');
+    }else if(result.status==='no_subscriptions'){
+      showToast('На сервере пока нет сохранённых push-подписок.');
+    }else if(result.status==='missing_key'){
+      showToast('В Cloudflare отсутствует секрет WEB_PUSH_PRIVATE_JWK.');
+    }else if(result.status==='invalid_key'){
+      showToast('Секрет WEB_PUSH_PRIVATE_JWK не удалось прочитать как JWK.');
+    }else if(result.status==='key_mismatch'){
+      showToast('Приватный VAPID-ключ не совпадает с публичным ключом приложения.');
+    }else{
+      var details=(result.results||[]).map(function(item){
+        return item.http_status?'HTTP '+item.http_status:(item.error_type||'ошибка отправки');
+      }).join(', ');
+      showToast('Push не принят сервером уведомлений. '+(details||'Подробности доступны в журналах Worker.'));
+    }
+  }catch(error){
+    showToast(error.message||'Не удалось выполнить тест push.');
+  }finally{
+    button.disabled=!state.pushEnabled;
   }
 }
 async function loadDailyReminder(){
@@ -842,6 +876,7 @@ $('loginForm').addEventListener('submit',async function(event){
 });
 $('logoutButton').addEventListener('click',async function(){try{await api('/api/logout',{method:'POST',body:'{}'});}catch(e){}showLogin();});
 $('pushEnableButton').addEventListener('click',enablePushNotifications);
+$('pushTestButton').addEventListener('click',sendPushTest);
 $('dailyReminderDone').addEventListener('click',function(){updateDailyReminder('acknowledged');});
 $('dailyReminderForgot').addEventListener('click',function(){updateDailyReminder('forgot');});
 document.addEventListener('visibilitychange',function(){if(!document.hidden)loadDailyReminder();});
