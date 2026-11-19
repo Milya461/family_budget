@@ -28,6 +28,7 @@ from app.web_push import (
     remove_push_subscription,
     save_push_subscription,
     send_daily_web_push,
+    send_test_web_push,
     set_daily_reminder_status,
 )
 
@@ -1464,6 +1465,10 @@ async def handle_web_api(path, request, env):
                 "success": True,
                 "reminder_retry": retry_result,
             })
+
+        if path == "/api/push/test" and method == "POST":
+            result = await send_test_web_push(env)
+            return _json(result)
 
         if path == "/api/push/unsubscribe" and method == "POST":
             body = await request.json()
