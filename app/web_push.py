@@ -314,6 +314,90 @@ def _private_key_matches_public(private_jwk):
         return False
 
 
+async def send_test_web_push(env):
+    """Send a diagnostic push without changing the daily reminder state."""
+    await ensure_web_push_tables()
+    subscriptions = await fetch_all("""
+        SELECT id, endpoint, p256dh, auth
+        FROM web_push_subscriptions
+        ORDER BY id
+    """)
+    if not subscriptions:
+        return {
+            "status": "no_subscriptions",
+            "attempted": 0,
+            "delivered": 0,
+            "results": [],
+        }
+
+    private_text = getattr(env, "WEB_PUSH_PRIVATE_JWK", None)
+    if not private_text:
+        return {
+            "status": "missing_key",
+            "attempted": 0,
+            "delivered": 0,
+            "results": [],
+        }
+
+    try:
+        private_jwk = json.loads(str(private_text))
+    except Exception:
+        return {
+            "status": "invalid_key",
+            "attempted": 0,
+            "delivered": 0,
+            "results": [],
+        }
+
+    if not _private_key_matches_public(private_jwk):
+        return {
+            "status": "key_mismatch",
+            "attempted": 0,
+            "delivered": 0,
+            "results": [],
+        }
+
+    payload = json.dumps({
+        "title": "Тест уведомлений",
+        "body": "Push-связь с семейным бюджетом работает.",
+        "url": "/",
+        "tag": f"family-budget-push-test-{int(time.time())}",
+    }, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+    results = []
+    delivered = 0
+    for subscription in subscriptions:
+        item = {"subscription_id": int(subscription["id"])}
+        try:
+            status_code = await _send_one(subscription, payload, private_jwk)
+            item["http_status"] = status_code
+            item["accepted"] = 200 <= status_code < 300
+            if item["accepted"]:
+                delivered += 1
+            elif status_code in (404, 410):
+                await execute(
+                    "DELETE FROM web_push_subscriptions WHERE id = ?",
+                    subscription["id"],
+                )
+                item["removed"] = True
+        except Exception as error:
+            item["accepted"] = False
+            item["error_type"] = type(error).__name__
+            print(
+                "WEB_PUSH_TEST_ERROR:",
+                subscription["id"],
+                type(error).__name__,
+            )
+        results.append(item)
+
+    return {
+        "status": "accepted" if delivered else "failed",
+        "attempted": len(subscriptions),
+        "delivered": delivered,
+        "results": results,
+    }
+
+
 async def send_daily_web_push(env, force=False):
     await ensure_web_push_tables()
     today = get_moscow_today().isoformat()
