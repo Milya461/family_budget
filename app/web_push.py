@@ -87,7 +87,7 @@ async def _vapid_token(endpoint, private_jwk):
 
 
 async def _encrypt_payload(subscription, payload):
-    from js import crypto
+    from js import crypto, Uint8Array
     user_public = _b64url_decode(subscription["keys"]["p256dh"])
     auth_secret = _b64url_decode(subscription["keys"]["auth"])
 
