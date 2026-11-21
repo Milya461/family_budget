@@ -719,7 +719,6 @@ $('balanceForm').addEventListener('submit',function(event){event.preventDefault(
   $('incomeDate').value=today;
 })();
 (async function init(){
-  await prepareServiceWorker();
   try{
     await reload();
   }catch(error){if(error.message!=='Нужно войти заново.')showToast(error.message);}
