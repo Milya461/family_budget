@@ -890,6 +890,124 @@ async def _move_november_fine_to_category():
     )
 
 
+async def _mark_november_utilities_unpaid():
+    """Keep November 2026 utilities planned but unpaid, as explicitly requested."""
+    month = "2026-11"
+    migration_key = "mark_november_utilities_unpaid_2026_v1"
+
+    await execute(
+        """
+        CREATE TABLE IF NOT EXISTS bot_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """
+    )
+    if await fetch_value(
+        "SELECT value FROM bot_settings WHERE key = ?",
+        migration_key,
+    ) == "done":
+        return
+
+    payments = await fetch_all(
+        """
+        SELECT mp.id, mp.status, mp.actual_amount
+        FROM mandatory_payments mp
+        JOIN salary_events se ON se.id = mp.salary_event_id
+        WHERE mp.payment_name = 'Коммунальные услуги'
+          AND se.planned_day = 25
+          AND substr(se.event_date, 1, 7) = ?
+        ORDER BY mp.id
+        """,
+        month,
+    )
+    if len(payments) != 1:
+        print(
+            "NOVEMBER_UTILITIES_STATUS_FIX_SKIPPED:",
+            {"month": month, "matching_payments": len(payments)},
+        )
+        return
+
+    payment = payments[0]
+    statements = []
+
+    # A paid payment creates an expense with the exact payment name and amount.
+    # Remove it only when one unambiguous matching November expense exists.
+    if payment.get("status") == "paid" and payment.get("actual_amount") is not None:
+        expenses = await fetch_all(
+            """
+            SELECT id
+            FROM operations
+            WHERE operation_type = 'expense'
+              AND description = 'Коммунальные услуги'
+              AND category_id IS NULL
+              AND debt_id IS NULL
+              AND ABS(amount - ?) < 0.005
+              AND substr(operation_date, 1, 7) = ?
+            ORDER BY id
+            """,
+            payment["actual_amount"],
+            month,
+        )
+        if len(expenses) > 1:
+            print(
+                "NOVEMBER_UTILITIES_STATUS_FIX_SKIPPED:",
+                {"month": month, "matching_expenses": len(expenses)},
+            )
+            return
+        if len(expenses) == 1:
+            statements.append((
+                """
+                DELETE FROM operations
+                WHERE id = ?
+                  AND operation_type = 'expense'
+                  AND description = 'Коммунальные услуги'
+                """,
+                (expenses[0]["id"],),
+            ))
+
+    statements.append((
+        """
+        UPDATE mandatory_payments
+        SET actual_amount = NULL,
+            status = 'pending'
+        WHERE id = ?
+          AND payment_name = 'Коммунальные услуги'
+        """,
+        (payment["id"],),
+    ))
+    statements.append((
+        """
+        INSERT INTO bot_settings (key, value)
+        VALUES (?, 'done')
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """,
+        (migration_key,),
+    ))
+    await execute_many(statements)
+
+    verified = await fetch_one(
+        """
+        SELECT id
+        FROM mandatory_payments
+        WHERE id = ?
+          AND status = 'pending'
+          AND actual_amount IS NULL
+        """,
+        payment["id"],
+    )
+    if verified:
+        print(
+            "NOVEMBER_UTILITIES_MARKED_UNPAID:",
+            {"month": month, "payment_id": payment["id"], "planned_amount": 10000},
+        )
+    else:
+        print(
+            "NOVEMBER_UTILITIES_STATUS_FIX_VERIFICATION_FAILED:",
+            {"month": month, "payment_id": payment["id"]},
+        )
+
+
 async def _dashboard(month):
     await ensure_rebalancing_tables()
 
@@ -900,6 +1018,7 @@ async def _dashboard(month):
 
     if month == "2026-11":
         await _move_3000_subscriptions_expense_to_ozon(month)
+        await _mark_november_utilities_unpaid()
 
     # On the first day, rebalance as soon as the web dashboard is opened.
     # The scheduled trigger remains as a fallback if nobody opens the app.
